@@ -9,7 +9,7 @@ import (
 	dalrecord "github.com/dal-go/dalgo/record"
 	"github.com/dal-go/dalgo/recordset"
 
-	"github.com/ingitdb/ingitdb-go"
+	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
 // errCollectionNotInDefinition is returned (wrapped) by resolveCollection when

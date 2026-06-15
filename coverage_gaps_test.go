@@ -22,7 +22,7 @@ import (
 	"github.com/ingr-io/ingr-go/ingr"
 	"gopkg.in/yaml.v3"
 
-	"github.com/ingitdb/ingitdb-go"
+	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
 // ---------------------------------------------------------------------------
@@ -1362,8 +1362,7 @@ func TestResolveExpression_ID(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// parse.go — EncodeMapOfRecordsContent, marshalForFormat,
-//             encodeINGRFromMap, resolveINGRColumns, parseINGRAsMap
+// parse.go functions moved to ingitdb-go — tested via ingitdb.* calls
 // ---------------------------------------------------------------------------
 
 func TestEncodeMapOfRecordsContent_YAML(t *testing.T) {
@@ -1371,7 +1370,7 @@ func TestEncodeMapOfRecordsContent_YAML(t *testing.T) {
 	data := map[string]map[string]any{
 		"a": {"x": 1},
 	}
-	out, err := EncodeMapOfRecordsContent(data, ingitdb.RecordFormatYAML, "test", nil)
+	out, err := ingitdb.EncodeMapOfRecordsContent(data, ingitdb.RecordFormatYAML, "test", nil)
 	if err != nil {
 		t.Fatalf("EncodeMapOfRecordsContent YAML: %v", err)
 	}
@@ -1385,7 +1384,7 @@ func TestEncodeMapOfRecordsContent_JSON(t *testing.T) {
 	data := map[string]map[string]any{
 		"a": {"x": 1},
 	}
-	out, err := EncodeMapOfRecordsContent(data, ingitdb.RecordFormatJSON, "test", nil)
+	out, err := ingitdb.EncodeMapOfRecordsContent(data, ingitdb.RecordFormatJSON, "test", nil)
 	if err != nil {
 		t.Fatalf("EncodeMapOfRecordsContent JSON: %v", err)
 	}
@@ -1399,20 +1398,12 @@ func TestEncodeMapOfRecordsContent_TOML(t *testing.T) {
 	data := map[string]map[string]any{
 		"a": {"x": "hello"},
 	}
-	out, err := EncodeMapOfRecordsContent(data, ingitdb.RecordFormatTOML, "test", nil)
+	out, err := ingitdb.EncodeMapOfRecordsContent(data, ingitdb.RecordFormatTOML, "test", nil)
 	if err != nil {
 		t.Fatalf("EncodeMapOfRecordsContent TOML: %v", err)
 	}
 	if len(out) == 0 {
 		t.Error("EncodeMapOfRecordsContent TOML: empty output")
-	}
-}
-
-func TestMarshalForFormat_UnsupportedFormat(t *testing.T) {
-	t.Parallel()
-	_, err := marshalForFormat(map[string]any{"x": 1}, ingitdb.RecordFormat("xml"))
-	if err == nil {
-		t.Fatal("want error for unsupported format")
 	}
 }
 
@@ -1422,12 +1413,12 @@ func TestEncodeMapOfRecordsContent_INGR_RoundTrip(t *testing.T) {
 		"alice": {"score": "99"},
 		"bob":   {"score": "55"},
 	}
-	out, err := EncodeMapOfRecordsContent(data, ingitdb.RecordFormatINGR, "players", []string{"score"})
+	out, err := ingitdb.EncodeMapOfRecordsContent(data, ingitdb.RecordFormatINGR, "players", []string{"score"})
 	if err != nil {
 		t.Fatalf("EncodeMapOfRecordsContent INGR: %v", err)
 	}
 	// Decode back.
-	parsed, err := ParseMapOfRecordsContent(out, ingitdb.RecordFormatINGR)
+	parsed, err := ingitdb.ParseMapOfRecordsContent(out, ingitdb.RecordFormatINGR)
 	if err != nil {
 		t.Fatalf("ParseMapOfRecordsContent INGR: %v", err)
 	}
@@ -1436,91 +1427,9 @@ func TestEncodeMapOfRecordsContent_INGR_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestResolveINGRColumns_EmptyColumnsOrder(t *testing.T) {
-	t.Parallel()
-	data := map[string]map[string]any{
-		"a": {"z": 1, "a": 2},
-	}
-	cols := resolveINGRColumns(data, nil)
-	if cols[0] != "$ID" {
-		t.Errorf("first column: got %q, want $ID", cols[0])
-	}
-	// Remaining must be sorted.
-	if len(cols) < 3 {
-		t.Fatalf("want at least 3 columns, got %v", cols)
-	}
-	if cols[1] > cols[2] {
-		t.Errorf("remaining columns not sorted: %v", cols[1:])
-	}
-}
-
-func TestResolveINGRColumns_WithColumnsOrder(t *testing.T) {
-	t.Parallel()
-	data := map[string]map[string]any{
-		"a": {"b": 1, "c": 2, "d": 3},
-	}
-	cols := resolveINGRColumns(data, []string{"c", "b"})
-	if cols[0] != "$ID" {
-		t.Errorf("first: want $ID, got %q", cols[0])
-	}
-	if cols[1] != "c" {
-		t.Errorf("second: want c, got %q", cols[1])
-	}
-	if cols[2] != "b" {
-		t.Errorf("third: want b, got %q", cols[2])
-	}
-}
-
-func TestParseINGRAsMap_MissingID(t *testing.T) {
-	t.Parallel()
-	// Build INGR content without $ID column.
-	var buf strings.Builder
-	w := ingr.NewRecordsWriter(&buf)
-	_, err := w.WriteHeader("test", []ingr.ColDef{{Name: "name"}})
-	if err != nil {
-		t.Fatalf("WriteHeader: %v", err)
-	}
-	_, err = w.WriteRecords(0, ingr.NewMapRecordEntry("r1", map[string]any{"name": "foo"}))
-	if err != nil {
-		t.Fatalf("WriteRecords: %v", err)
-	}
-	if err := w.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-	_, parseErr := parseINGRAsMap([]byte(buf.String()))
-	if parseErr == nil {
-		t.Fatal("want error for INGR without $ID column")
-	}
-}
-
-func TestParseINGRAsMap_DuplicateID(t *testing.T) {
-	t.Parallel()
-	var buf strings.Builder
-	w := ingr.NewRecordsWriter(&buf)
-	_, err := w.WriteHeader("test", []ingr.ColDef{{Name: "$ID"}, {Name: "name"}})
-	if err != nil {
-		t.Fatalf("WriteHeader: %v", err)
-	}
-	// Both records share the same id "dup" — the first arg to NewMapRecordEntry
-	// is what gets written as the $ID column value.
-	r1 := ingr.NewMapRecordEntry("dup", map[string]any{"name": "A"})
-	r2 := ingr.NewMapRecordEntry("dup", map[string]any{"name": "B"})
-	_, err = w.WriteRecords(0, r1, r2)
-	if err != nil {
-		t.Fatalf("WriteRecords: %v", err)
-	}
-	if err := w.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-	_, parseErr := parseINGRAsMap([]byte(buf.String()))
-	if parseErr == nil {
-		t.Fatal("want error for duplicate $ID")
-	}
-}
-
 func TestParseRecordContentForCollection_NilColDef(t *testing.T) {
 	t.Parallel()
-	_, err := ParseRecordContentForCollection([]byte("x: 1"), nil)
+	_, err := ingitdb.ParseRecordContentForCollection([]byte("x: 1"), nil)
 	if err == nil {
 		t.Fatal("want error for nil colDef")
 	}
@@ -1529,7 +1438,7 @@ func TestParseRecordContentForCollection_NilColDef(t *testing.T) {
 func TestParseRecordContentForCollection_NilRecordFile(t *testing.T) {
 	t.Parallel()
 	colDef := &ingitdb.CollectionDef{ID: "c", RecordFile: nil}
-	_, err := ParseRecordContentForCollection([]byte("x: 1"), colDef)
+	_, err := ingitdb.ParseRecordContentForCollection([]byte("x: 1"), colDef)
 	if err == nil {
 		t.Fatal("want error for nil RecordFile")
 	}
@@ -1537,7 +1446,7 @@ func TestParseRecordContentForCollection_NilRecordFile(t *testing.T) {
 
 func TestEncodeRecordContentForCollection_NilColDef(t *testing.T) {
 	t.Parallel()
-	_, err := EncodeRecordContentForCollection(map[string]any{"x": 1}, nil)
+	_, err := ingitdb.EncodeRecordContentForCollection(map[string]any{"x": 1}, nil)
 	if err == nil {
 		t.Fatal("want error for nil colDef")
 	}
@@ -1546,7 +1455,7 @@ func TestEncodeRecordContentForCollection_NilColDef(t *testing.T) {
 func TestEncodeRecordContentForCollection_NilRecordFile(t *testing.T) {
 	t.Parallel()
 	colDef := &ingitdb.CollectionDef{ID: "c", RecordFile: nil}
-	_, err := EncodeRecordContentForCollection(map[string]any{"x": 1}, colDef)
+	_, err := ingitdb.EncodeRecordContentForCollection(map[string]any{"x": 1}, colDef)
 	if err == nil {
 		t.Fatal("want error for nil RecordFile")
 	}

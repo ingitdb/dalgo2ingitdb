@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ingitdb/ingitdb-go"
+	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
 // ordersColDef has stored qty/price (ints) plus computed columns: total

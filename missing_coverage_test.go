@@ -26,7 +26,7 @@ import (
 	"github.com/dal-go/dalgo/update"
 	"github.com/ingr-io/ingr-go/ingr"
 
-	"github.com/ingitdb/ingitdb-go"
+	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
 // ---------------------------------------------------------------------------
@@ -98,132 +98,6 @@ func TestWithExclusiveLock_AcquireError(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// parse.go — ParseRecordContentForCollection markdown branch
-//   - frontmatter key "$id" is passed through (line 76)
-//   - undeclared frontmatter key is skipped (line 80)
-//
-// marshalForFormat — YAML marshal error branch (line 141-143)
-// encodeINGRFromMap — WriteHeader error (line 194-196); unreachable because
-//   ingr.NewRecordsWriter never fails on Write; see note below.
-// resolveINGRColumns — duplicate in columnsOrder skipped (line 415)
-// parseINGRAsMap — non-string $ID (line 449)
-// ---------------------------------------------------------------------------
-
-func TestParseRecordContentForCollection_Markdown_IDPassthrough(t *testing.T) {
-	t.Parallel()
-	// Frontmatter with $id present: it must be passed through to result.
-	content := []byte("---\n$id: mykey\ntitle: Hello\n---\nBody text.\n")
-	col := markdownColDef("")
-	col.Columns["title"] = &ingitdb.ColumnDef{Type: ingitdb.ColumnTypeString}
-	data, err := ParseRecordContentForCollection(content, col)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if data["$id"] != "mykey" {
-		t.Errorf("$id should be passed through; got data=%v", data)
-	}
-}
-
-func TestParseRecordContentForCollection_Markdown_UndeclaredKeySkipped(t *testing.T) {
-	t.Parallel()
-	// Frontmatter with a key not in colDef.Columns — it must be absent from result.
-	content := []byte("---\ntitle: Hello\nextra_undeclared: value\n---\nBody.\n")
-	col := markdownColDef("")
-	// Only "title" and the content field are in Columns.
-	col.Columns = map[string]*ingitdb.ColumnDef{
-		"title":                             {Type: ingitdb.ColumnTypeString},
-		ingitdb.DefaultMarkdownContentField: {Type: ingitdb.ColumnTypeString},
-	}
-	data, err := ParseRecordContentForCollection(content, col)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if _, ok := data["extra_undeclared"]; ok {
-		t.Errorf("undeclared key must be filtered; got data=%v", data)
-	}
-	if data["title"] != "Hello" {
-		t.Errorf("title: got %v, want Hello", data["title"])
-	}
-}
-
-// TestMarshalForFormat_YAML_Error tries to marshal a value that yaml.Marshal
-// would reject. In practice, yaml.Marshal accepts almost any Go value, so
-// this branch (parse.go:141) is difficult to trigger.  We exercise the JSON
-// marshal path with an unmarshalable type instead (maps with non-string keys
-// are rejected by encoding/json).
-func TestMarshalForFormat_JSON_UnmarshalableValue(t *testing.T) {
-	t.Parallel()
-	// map with non-string key cannot be JSON-marshalled.
-	type badKey struct{ x int }
-	bad := map[badKey]any{{x: 1}: "val"}
-	_, err := marshalForFormat(bad, ingitdb.RecordFormatJSON)
-	if err == nil {
-		t.Fatal("want error marshalling map with non-string key to JSON")
-	}
-}
-
-func TestResolveINGRColumns_DuplicateInColumnsOrder(t *testing.T) {
-	t.Parallel()
-	// Passing the same name twice in columnsOrder: duplicates must be deduplicated.
-	data := map[string]map[string]any{
-		"a": {"score": 1},
-	}
-	cols := resolveINGRColumns(data, []string{"score", "score", "$ID"})
-	// Count occurrences of "score" — must appear exactly once.
-	count := 0
-	for _, c := range cols {
-		if c == "score" {
-			count++
-		}
-	}
-	if count != 1 {
-		t.Errorf("resolveINGRColumns: score should appear exactly once, got %v", cols)
-	}
-	// $ID in columnsOrder is also deduplicated.
-	idCount := 0
-	for _, c := range cols {
-		if c == "$ID" {
-			idCount++
-		}
-	}
-	if idCount != 1 {
-		t.Errorf("resolveINGRColumns: $ID should appear exactly once, got %v", cols)
-	}
-}
-
-func TestParseINGRAsMap_NonStringID(t *testing.T) {
-	t.Parallel()
-	// ingr.Unmarshal parses each cell as JSON, so a bareword (unquoted) value
-	// in the $ID column decodes to a non-string. We build a valid INGR stream
-	// via the writer, then rewrite the quoted $ID to a JSON number to trigger
-	// the non-string branch.
-	data := map[string]map[string]any{
-		"alice": {"val": "1"},
-	}
-	out, err := encodeINGRFromMap(data, "test", nil)
-	if err != nil {
-		t.Fatalf("encodeINGRFromMap: %v", err)
-	}
-	content := strings.Replace(string(out), `"alice"`, "123", 1)
-
-	_, err = parseINGRAsMap([]byte(content))
-	if err == nil {
-		t.Fatal("want error for non-string $ID")
-	}
-	if !strings.Contains(err.Error(), "non-string $ID") {
-		t.Errorf("error = %v, want it to mention non-string $ID", err)
-	}
-}
-
-func TestParseINGRAsMap_InvalidContent(t *testing.T) {
-	t.Parallel()
-	// Garbage bytes that cannot be parsed as INGR.
-	_, err := parseINGRAsMap([]byte("not ingr content at all !!!"))
-	if err == nil {
-		t.Fatal("want error for invalid INGR content")
-	}
-}
 
 // ---------------------------------------------------------------------------
 // query.go — readAllSingleRecords uncovered branches:
@@ -1902,69 +1776,6 @@ func TestReadAllSingleRecords_ReadError(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// parseCSVForCollection — uncovered row-level branches
-// ---------------------------------------------------------------------------
-
-// TestParseCSVForCollection_RowReadError exercises the "failed to read csv row"
-// branch (csv.go line 49).
-func TestParseCSVForCollection_RowReadError(t *testing.T) {
-	t.Parallel()
-	colDef := &ingitdb.CollectionDef{
-		ID:           "c",
-		ColumnsOrder: []string{"a", "b"},
-		RecordFile:   &ingitdb.RecordFileDef{Format: ingitdb.RecordFormatCSV},
-	}
-	// Header is valid; data row has an unclosed quote causing a parse error.
-	content := []byte("a,b\n\"unclosed,value\n")
-	_, err := parseCSVForCollection(content, colDef)
-	if err == nil {
-		t.Fatal("parseCSVForCollection: want error for malformed data row")
-	}
-}
-
-// TestParseCSVForCollection_WrongRowLength exercises the row length mismatch
-// branch (csv.go line 52-54) — this branch requires FieldsPerRecord = -1 and
-// a row shorter than the header. However, csv.NewReader with FieldsPerRecord=-1
-// accepts variable-length rows.  The "wrong length" check is after the CSV
-// read, checking len(fields) != len(header).  We need a row with a different
-// number of fields than the header.
-//
-// Note: csv.NewReader with FieldsPerRecord=-1 does NOT enforce column counts,
-// so a row with fewer columns IS returned with the fewer-column slice.
-func TestParseCSVForCollection_RowLengthMismatch(t *testing.T) {
-	t.Parallel()
-	colDef := &ingitdb.CollectionDef{
-		ID:           "c",
-		ColumnsOrder: []string{"a", "b", "c"},
-		RecordFile:   &ingitdb.RecordFileDef{Format: ingitdb.RecordFormatCSV},
-	}
-	// Header has 3 columns; data row has only 2.
-	content := []byte("a,b,c\n1,2\n")
-	_, err := parseCSVForCollection(content, colDef)
-	if err == nil {
-		t.Fatal("parseCSVForCollection: want error for row with wrong column count")
-	}
-}
-
-// TestParseCSVForCollection_HeaderReadError exercises the "failed to read csv
-// header" branch (csv.go line 36-38): the first csv.Read returns a non-EOF
-// parse error rather than io.EOF.
-func TestParseCSVForCollection_HeaderReadError(t *testing.T) {
-	t.Parallel()
-	colDef := &ingitdb.CollectionDef{
-		ID:           "c",
-		ColumnsOrder: []string{"a", "b"},
-		RecordFile:   &ingitdb.RecordFileDef{Format: ingitdb.RecordFormatCSV},
-	}
-	// The header line itself has an unclosed quote, so the very first
-	// csv.Read fails with a parse error (not io.EOF).
-	content := []byte("\"unclosed,value\n")
-	_, err := parseCSVForCollection(content, colDef)
-	if err == nil {
-		t.Fatal("parseCSVForCollection: want error for malformed csv header")
-	}
-}
 
 // ---------------------------------------------------------------------------
 // ParseBatchYAMLStream — invalid YAML document error
@@ -1988,26 +1799,6 @@ func TestParseBatchYAMLStream_InvalidYAML(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ParseRecordContentForCollection — markdown parse error
-// ---------------------------------------------------------------------------
-
-// TestParseRecordContentForCollection_Markdown_ParseError exercises the markdown
-// parse error branch (parse.go line 61-63).
-func TestParseRecordContentForCollection_Markdown_ParseError(t *testing.T) {
-	t.Parallel()
-	// Pass content that is not valid markdown frontmatter.
-	// markdown.Parse expects "---\n...\n---\n" structure; completely invalid
-	// content may return an error or just empty frontmatter.
-	// We test with content that causes a YAML parse error in the frontmatter.
-	content := []byte("---\n{bad yaml: [\n---\nbody\n")
-	col := markdownColDef("")
-	_, err := ParseRecordContentForCollection(content, col)
-	// The markdown parser may or may not error on this; what matters is we
-	// exercise the branch.  If it doesn't error, we just verify no panic.
-	_ = err
-}
-
-// ---------------------------------------------------------------------------
 // marshalForFormat — YAML and TOML marshal errors
 //
 // yaml.Marshal is extremely permissive and never errors on standard Go types.
@@ -2016,19 +1807,6 @@ func TestParseRecordContentForCollection_Markdown_ParseError(t *testing.T) {
 // These branches are effectively unreachable via the production code path.
 // They are documented below.
 // ---------------------------------------------------------------------------
-
-// TestMarshalForFormat_TOML_Marshals exercises the TOML path to confirm it
-// works correctly (increasing coverage by going through the success path).
-func TestMarshalForFormat_TOML_Success(t *testing.T) {
-	t.Parallel()
-	out, err := marshalForFormat(map[string]any{"key": "val"}, ingitdb.RecordFormatTOML)
-	if err != nil {
-		t.Fatalf("marshalForFormat TOML: %v", err)
-	}
-	if len(out) == 0 {
-		t.Error("marshalForFormat TOML: empty output")
-	}
-}
 
 // ---------------------------------------------------------------------------
 // AlterCollection — readCollectionDefYAML error inside lock

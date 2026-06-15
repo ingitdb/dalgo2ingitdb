@@ -10,9 +10,9 @@ import (
 	"github.com/dal-go/dalgo/dbschema"
 	"github.com/dal-go/dalgo/ddl"
 
-	"github.com/ingitdb/ingitdb-go"
-	"github.com/ingitdb/ingitdb-go/config"
-	"github.com/ingitdb/ingitdb-go/validator"
+	"github.com/ingitdb/ingitdb-go/ingitdb"
+	"github.com/ingitdb/ingitdb-go/ingitdb/config"
+	"github.com/ingitdb/ingitdb-go/ingitdb/validator"
 )
 
 // labelsCollectionDef returns a minimal dbschema.CollectionDef for a

@@ -11,7 +11,7 @@ import (
 	dalrecord "github.com/dal-go/dalgo/record"
 	"github.com/dal-go/dalgo/update"
 
-	"github.com/ingitdb/ingitdb-go"
+	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
 // readwriteTx is the read-write transaction handle. It embeds readonlyTx

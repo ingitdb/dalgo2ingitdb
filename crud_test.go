@@ -13,7 +13,7 @@ import (
 	"github.com/dal-go/dalgo/update"
 
 	"github.com/ingitdb/dalgo2ingitdb"
-	"github.com/ingitdb/ingitdb-go/validator"
+	"github.com/ingitdb/ingitdb-go/ingitdb/validator"
 )
 
 // setupSingleRecordDB creates a fresh temp project with a single

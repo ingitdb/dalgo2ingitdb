@@ -12,8 +12,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/ingitdb/ingitdb-go"
-	"github.com/ingitdb/ingitdb-go/config"
+	"github.com/ingitdb/ingitdb-go/ingitdb"
+	"github.com/ingitdb/ingitdb-go/ingitdb/config"
 )
 
 // ErrCollectionPathConflict is returned by CreateCollection when

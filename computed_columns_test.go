@@ -4,7 +4,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/ingitdb/ingitdb-go"
+	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
 func computedColumnsCollectionDef() *ingitdb.CollectionDef {

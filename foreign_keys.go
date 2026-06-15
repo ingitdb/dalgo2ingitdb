@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/ingitdb/ingitdb-go"
+	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
 func (r readwriteTx) validateWriteForeignKeys(operation, childCollection string, childDef *ingitdb.CollectionDef, data map[string]any) error {

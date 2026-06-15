@@ -14,7 +14,7 @@ import (
 	"github.com/dal-go/dalgo/dbschema"
 	"gopkg.in/yaml.v3"
 
-	"github.com/ingitdb/ingitdb-go"
+	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
 // pkFieldName is the synthesized primary-key field name used to describe

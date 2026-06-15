@@ -5,7 +5,7 @@ import (
 
 	"github.com/dal-go/dalgo/recordset"
 
-	"github.com/ingitdb/ingitdb-go"
+	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
 // AccessValue reads colName from a recordset row — the single coerce-on-access

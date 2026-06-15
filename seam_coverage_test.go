@@ -11,7 +11,7 @@ import (
 
 	"github.com/dal-go/dalgo/dbschema"
 
-	ingitdb "github.com/ingitdb/ingitdb-go"
+	ingitdb "github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
 // errSeam is a sentinel error injected by seam-swapping tests in this file.

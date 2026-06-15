@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/dal-go/dalgo/dbschema"
-	"github.com/ingitdb/ingitdb-go"
+	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
 func TestIngitdbTypeToDBSchema(t *testing.T) {

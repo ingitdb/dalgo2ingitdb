@@ -1,6 +1,6 @@
 package dalgo2ingitdb
 
-import "github.com/ingitdb/ingitdb-go"
+import "github.com/ingitdb/ingitdb-go/ingitdb"
 
 // ValidateWrite enforces every write-time rule before a record is inserted or
 // set, against the on-disk state described by def:

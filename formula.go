@@ -5,7 +5,7 @@ import (
 	"maps"
 	"sort"
 
-	"github.com/ingitdb/ingitdb-go"
+	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
 // ApplyFormulasToRead computes the value of every computed column (one with a

@@ -6,7 +6,7 @@ import (
 	e2e "github.com/dal-go/dalgo/end2end"
 	"github.com/dal-go/dalgo/end2end/models"
 
-	"github.com/ingitdb/ingitdb-go/config"
+	"github.com/ingitdb/ingitdb-go/ingitdb/config"
 )
 
 // TestDalgoEndToEnd runs the shared dalgo end-to-end suite against this

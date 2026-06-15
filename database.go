@@ -10,7 +10,7 @@ import (
 	"github.com/dal-go/dalgo/ddl"
 	"github.com/dal-go/dalgo/recordset"
 
-	"github.com/ingitdb/ingitdb-go"
+	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
 // Database is the dal.DB implementation for inGitDB projects on the local

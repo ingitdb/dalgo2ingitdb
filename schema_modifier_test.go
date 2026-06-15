@@ -12,7 +12,7 @@ import (
 	"github.com/dal-go/dalgo/ddl"
 	"gopkg.in/yaml.v3"
 
-	"github.com/ingitdb/ingitdb-go"
+	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
 func tagsCollectionDef() dbschema.CollectionDef {

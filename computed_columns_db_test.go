@@ -11,7 +11,7 @@ import (
 	"github.com/dal-go/dalgo/ddl"
 
 	"github.com/ingitdb/dalgo2ingitdb"
-	"github.com/ingitdb/ingitdb-go/validator"
+	"github.com/ingitdb/ingitdb-go/ingitdb/validator"
 )
 
 // setupComputedColumnDB creates a "people" collection whose "full_name" column

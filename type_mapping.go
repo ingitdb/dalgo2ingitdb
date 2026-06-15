@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/dal-go/dalgo/dbschema"
-	"github.com/ingitdb/ingitdb-go"
+	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
 // ingitdbTypeToDBSchema converts an ingitdb column type to its portable

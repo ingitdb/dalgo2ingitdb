@@ -8,7 +8,7 @@ import (
 	"github.com/gofrs/flock"
 	"gopkg.in/yaml.v3"
 
-	"github.com/ingitdb/ingitdb-go/config"
+	"github.com/ingitdb/ingitdb-go/ingitdb/config"
 )
 
 // Test seams over os.*/config functions. These hold no state; tests swap them

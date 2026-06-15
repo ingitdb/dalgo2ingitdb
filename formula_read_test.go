@@ -10,7 +10,7 @@ import (
 	"github.com/dal-go/dalgo/dal"
 
 	"github.com/ingitdb/dalgo2ingitdb"
-	"github.com/ingitdb/ingitdb-go/validator"
+	"github.com/ingitdb/ingitdb-go/ingitdb/validator"
 )
 
 // setupFormulaDB creates a temp project with a "people" SingleRecord/YAML
