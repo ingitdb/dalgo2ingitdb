@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/dal-go/dalgo v0.46.1
 	github.com/gofrs/flock v0.13.0
-	github.com/ingitdb/ingitdb-go v0.0.0
+	github.com/ingitdb/ingitdb-go v1.32.0
 	github.com/ingr-io/ingr-go v0.0.2
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -25,5 +25,3 @@ require (
 	go.starlark.net v0.0.0-20260613233743-8ba36ccb83fb // indirect
 	golang.org/x/sys v0.42.0 // indirect
 )
-
-replace github.com/ingitdb/ingitdb-go => ../ingitdb-go
