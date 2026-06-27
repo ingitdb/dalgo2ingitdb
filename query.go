@@ -14,9 +14,8 @@ import (
 )
 
 // executeQueryToRecordsReader reads every record in the collection
-// referenced by query.From(), applies WHERE / ORDER BY / LIMIT in memory,
-// and returns a slice-backed RecordsReader. Mirrors the algorithm in
-// dalgo2fsingitdb but uses this package's locked record I/O helpers.
+// referenced by query.From(), applies WHERE / GROUP BY / HAVING / ORDER BY /
+// LIMIT / column projection in memory, and returns a slice-backed RecordsReader.
 func executeQueryToRecordsReader(_ context.Context, r readonlyTx, query dal.Query) (dal.RecordsReader, error) {
 	colDef, err := collectionFromQuery(r.def, query)
 	if err != nil {
@@ -36,13 +35,378 @@ func executeQueryToRecordsReader(_ context.Context, r readonlyTx, query dal.Quer
 			return nil, err
 		}
 	}
+
+	// GROUP BY path: partition, aggregate, HAVING, ORDER BY, LIMIT, project.
+	if groupBy := sq.GroupBy(); len(groupBy) > 0 {
+		return applyGroupBy(sq, records, colDef.ID)
+	}
+
 	if orderBy := sq.OrderBy(); len(orderBy) > 0 {
 		applyOrderBy(records, orderBy)
 	}
 	if limit := sq.Limit(); limit > 0 && len(records) > limit {
 		records = records[:limit]
 	}
+
+	// Column projection (no GROUP BY).
+	if columns := sq.Columns(); len(columns) > 0 {
+		records, err = applyProjection(records, columns, colDef.ID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return newSliceRecordsReader(records), nil
+}
+
+// applyGroupBy partitions records into groups keyed by the GROUP BY
+// expressions, computes aggregate columns, applies HAVING, ORDER BY, LIMIT, and
+// returns projected group records.
+func applyGroupBy(sq dal.StructuredQuery, records []dal.Record, collection string) (dal.RecordsReader, error) {
+	groupBy := sq.GroupBy()
+	columns := sq.Columns()
+
+	// Partition: preserve first-seen insertion order.
+	type group struct {
+		rows []map[string]any
+		keys []map[string]any // parallel, for reading back group-key fields
+		out  map[string]any
+	}
+	order := make([]string, 0)
+	byKey := make(map[string]*group)
+
+	for _, rec := range records {
+		data := rec.Data().(map[string]any)
+		recKey := fmt.Sprintf("%v", rec.Key().ID)
+		gk, err := groupKeyStr(groupBy, data, recKey)
+		if err != nil {
+			return nil, err
+		}
+		g := byKey[gk]
+		if g == nil {
+			g = &group{}
+			byKey[gk] = g
+			order = append(order, gk)
+		}
+		g.rows = append(g.rows, data)
+		g.keys = append(g.keys, map[string]any{"$id": recKey})
+	}
+
+	groups := make([]*group, len(order))
+	for i, k := range order {
+		groups[i] = byKey[k]
+	}
+
+	// Project each group's selected columns.
+	for _, g := range groups {
+		out := make(map[string]any, len(columns))
+		for _, col := range columns {
+			val, err := resolveGroupExpr(col.Expression, g.rows)
+			if err != nil {
+				return nil, err
+			}
+			out[columnOutKey(col)] = val
+		}
+		g.out = out
+	}
+
+	// HAVING: filter on projected output + re-evaluable aggregates.
+	if having := sq.Having(); having != nil {
+		kept := groups[:0]
+		for _, g := range groups {
+			ok, err := matchesHavingCondition(having, g.out, g.rows)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				kept = append(kept, g)
+			}
+		}
+		groups = kept
+	}
+
+	// ORDER BY over projected output rows.
+	if orderBy := sq.OrderBy(); len(orderBy) > 0 {
+		sort.SliceStable(groups, func(i, j int) bool {
+			for _, oe := range orderBy {
+				f, ok := oe.Expression().(dal.FieldRef)
+				if !ok {
+					continue
+				}
+				vI := groups[i].out[f.Name()]
+				vJ := groups[j].out[f.Name()]
+				c := compareValues(vI, vJ)
+				if c == 0 {
+					continue
+				}
+				if oe.Descending() {
+					return c > 0
+				}
+				return c < 0
+			}
+			return false
+		})
+	}
+
+	// OFFSET / LIMIT.
+	if offset := sq.Offset(); offset > 0 {
+		if offset >= len(groups) {
+			groups = nil
+		} else {
+			groups = groups[offset:]
+		}
+	}
+	if limit := sq.Limit(); limit > 0 && limit < len(groups) {
+		groups = groups[:limit]
+	}
+
+	result := make([]dal.Record, len(groups))
+	for i, g := range groups {
+		key := dal.NewKeyWithID(collection, fmt.Sprint(i))
+		result[i] = dal.NewRecordWithData(key, g.out).SetError(nil)
+	}
+	return newSliceRecordsReader(result), nil
+}
+
+// groupKeyStr builds a stable partition key from the GROUP BY expressions.
+func groupKeyStr(groupBy []dal.Expression, data map[string]any, recKey string) (string, error) {
+	parts := make([]string, len(groupBy))
+	for i, ge := range groupBy {
+		v, err := resolveSimpleExpr(ge, data, recKey)
+		if err != nil {
+			return "", err
+		}
+		parts[i] = fmt.Sprintf("%T:%v", v, v)
+	}
+	return strings.Join(parts, "\x00"), nil
+}
+
+// resolveGroupExpr evaluates an expression for a group: aggregates over all
+// member rows; FieldRef reads the first row's value (a GROUP BY key column);
+// Constant returns the value.
+func resolveGroupExpr(e dal.Expression, rows []map[string]any) (any, error) {
+	switch ex := e.(type) {
+	case dal.AggregateFunc:
+		return evalAggregate(ex, rows)
+	case dal.FieldRef:
+		if len(rows) == 0 {
+			return nil, nil
+		}
+		return rows[0][ex.Name()], nil
+	case dal.Constant:
+		return ex.Value, nil
+	default:
+		return nil, fmt.Errorf("dalgo2ingitdb: unsupported grouped expression %T", e)
+	}
+}
+
+// evalAggregate computes one aggregate function over a group's rows.
+func evalAggregate(af dal.AggregateFunc, rows []map[string]any) (any, error) {
+	args := af.FuncArgs()
+	switch af.FuncName() {
+	case dal.COUNT:
+		// COUNT(*): non-field arg (star) → count all rows.
+		if len(args) == 1 {
+			if _, isField := args[0].(dal.FieldRef); !isField {
+				return len(rows), nil
+			}
+		}
+		// COUNT(field): count non-null values.
+		n := 0
+		for _, row := range rows {
+			if len(args) > 0 {
+				f, ok := args[0].(dal.FieldRef)
+				if !ok {
+					continue
+				}
+				v := row[f.Name()]
+				if v != nil {
+					n++
+				}
+			}
+		}
+		return n, nil
+	case dal.SUM, dal.AVERAGE:
+		if len(args) == 0 {
+			return nil, nil
+		}
+		f, ok := args[0].(dal.FieldRef)
+		if !ok {
+			return nil, fmt.Errorf("dalgo2ingitdb: %s requires a field argument", af.FuncName())
+		}
+		sum, cnt := 0.0, 0
+		for _, row := range rows {
+			v := row[f.Name()]
+			if v == nil {
+				continue
+			}
+			n, ok := toFloat64(v)
+			if !ok {
+				continue
+			}
+			sum += n
+			cnt++
+		}
+		if cnt == 0 {
+			return nil, nil
+		}
+		if af.FuncName() == dal.AVERAGE {
+			return sum / float64(cnt), nil
+		}
+		return sum, nil
+	case dal.MIN, dal.MAX:
+		if len(args) == 0 {
+			return nil, nil
+		}
+		f, ok := args[0].(dal.FieldRef)
+		if !ok {
+			return nil, fmt.Errorf("dalgo2ingitdb: %s requires a field argument", af.FuncName())
+		}
+		var best any
+		found := false
+		for _, row := range rows {
+			v := row[f.Name()]
+			if v == nil {
+				continue
+			}
+			if !found {
+				best, found = v, true
+				continue
+			}
+			c := compareValues(v, best)
+			if (af.FuncName() == dal.MIN && c < 0) || (af.FuncName() == dal.MAX && c > 0) {
+				best = v
+			}
+		}
+		if !found {
+			return nil, nil
+		}
+		return best, nil
+	default:
+		return nil, fmt.Errorf("dalgo2ingitdb: unsupported aggregate %q", af.FuncName())
+	}
+}
+
+// matchesHavingCondition evaluates a HAVING condition against a projected group
+// output row plus the group's member rows (needed to re-evaluate aggregate
+// expressions that appear in HAVING directly, not via a SELECT alias).
+func matchesHavingCondition(cond dal.Condition, out map[string]any, rows []map[string]any) (bool, error) {
+	switch c := cond.(type) {
+	case dal.Comparison:
+		l, err := resolveHavingExpr(c.Left, out, rows)
+		if err != nil {
+			return false, err
+		}
+		r, err := resolveHavingExpr(c.Right, out, rows)
+		if err != nil {
+			return false, err
+		}
+		cmp := compareValues(l, r)
+		switch c.Operator {
+		case dal.Equal:
+			return cmp == 0, nil
+		case dal.GreaterThen:
+			return cmp > 0, nil
+		case dal.GreaterOrEqual:
+			return cmp >= 0, nil
+		case dal.LessThen:
+			return cmp < 0, nil
+		case dal.LessOrEqual:
+			return cmp <= 0, nil
+		default:
+			return false, fmt.Errorf("dalgo2ingitdb: unsupported HAVING operator %q", c.Operator)
+		}
+	case dal.GroupCondition:
+		for _, sub := range c.Conditions() {
+			ok, err := matchesHavingCondition(sub, out, rows)
+			if err != nil {
+				return false, err
+			}
+			if c.Operator() == dal.Or {
+				if ok {
+					return true, nil
+				}
+			} else {
+				if !ok {
+					return false, nil
+				}
+			}
+		}
+		return c.Operator() != dal.Or, nil
+	default:
+		return false, fmt.Errorf("dalgo2ingitdb: unsupported HAVING condition type %T", cond)
+	}
+}
+
+// resolveHavingExpr resolves an expression in HAVING context: aggregates are
+// re-evaluated over the group rows (handles COUNT(*) > 1 style); FieldRefs
+// check the projected output row first (alias lookup), then fall back to the
+// first member row; Constants yield their value directly.
+func resolveHavingExpr(e dal.Expression, out map[string]any, rows []map[string]any) (any, error) {
+	switch ex := e.(type) {
+	case dal.AggregateFunc:
+		return evalAggregate(ex, rows)
+	case dal.FieldRef:
+		// Check projected output (SELECT alias or GROUP BY column) first.
+		if v, ok := out[ex.Name()]; ok {
+			return v, nil
+		}
+		if len(rows) > 0 {
+			return rows[0][ex.Name()], nil
+		}
+		return nil, nil
+	case dal.Constant:
+		return ex.Value, nil
+	default:
+		return nil, fmt.Errorf("dalgo2ingitdb: unsupported HAVING expression type %T", e)
+	}
+}
+
+// applyProjection reduces each record's data map to only the selected columns.
+func applyProjection(records []dal.Record, columns []dal.Column, collection string) ([]dal.Record, error) {
+	result := make([]dal.Record, len(records))
+	for i, rec := range records {
+		data := rec.Data().(map[string]any)
+		recKey := fmt.Sprintf("%v", rec.Key().ID)
+		out := make(map[string]any, len(columns))
+		for _, col := range columns {
+			v, err := resolveSimpleExpr(col.Expression, data, recKey)
+			if err != nil {
+				return nil, err
+			}
+			out[columnOutKey(col)] = v
+		}
+		key := dal.NewKeyWithID(collection, recKey)
+		result[i] = dal.NewRecordWithData(key, out).SetError(nil)
+	}
+	return result, nil
+}
+
+// columnOutKey returns the output map key for a projected column: Alias, then
+// FieldRef name, then the expression's string form.
+func columnOutKey(col dal.Column) string {
+	if col.Alias != "" {
+		return col.Alias
+	}
+	if f, ok := col.Expression.(dal.FieldRef); ok {
+		return f.Name()
+	}
+	return col.Expression.String()
+}
+
+// resolveSimpleExpr resolves a single expression against a flat data map.
+func resolveSimpleExpr(e dal.Expression, data map[string]any, recKey string) (any, error) {
+	switch ex := e.(type) {
+	case dal.FieldRef:
+		if ex.Name() == "$id" {
+			return recKey, nil
+		}
+		return data[ex.Name()], nil
+	case dal.Constant:
+		return ex.Value, nil
+	default:
+		return nil, fmt.Errorf("dalgo2ingitdb: unsupported expression type %T", e)
+	}
 }
 
 // collectionFromQuery resolves the single collection a structured query reads

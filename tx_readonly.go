@@ -156,6 +156,11 @@ func (r readonlyTx) ExecuteQueryToRecordsReader(ctx context.Context, query dal.Q
 // evaluator, so computed values resolve lazily — only when a consumer reads
 // them — never eagerly baked here.
 func (r readonlyTx) ExecuteQueryToRecordsetReader(_ context.Context, query dal.Query, _ ...recordset.Option) (dal.RecordsetReader, error) {
+	// GROUP BY produces a dynamically-shaped result that cannot be represented
+	// by the typed recordset schema; report as unsupported so callers can skip.
+	if sq, ok := query.(dal.StructuredQuery); ok && len(sq.GroupBy()) > 0 {
+		return nil, fmt.Errorf("dalgo2ingitdb: GROUP BY not supported in recordset reader: %w", dal.ErrNotSupported)
+	}
 	colDef, err := collectionFromQuery(r.def, query)
 	if err != nil {
 		return nil, err
