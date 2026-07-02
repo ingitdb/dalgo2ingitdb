@@ -181,13 +181,15 @@ func (r readonlyTx) resolveCollection(key *dal.Key) (*ingitdb.CollectionDef, str
 	if key == nil {
 		return nil, "", fmt.Errorf("dalgo2ingitdb: key is nil")
 	}
-	collectionID := key.Collection()
-	colDef, ok := r.def.Collections[collectionID]
-	if !ok {
-		return nil, "", fmt.Errorf("dalgo2ingitdb: %w: %q", errCollectionNotInDefinition, collectionID)
+	// resolveScopedCollection walks the key's parent chain so nested records are
+	// physically scoped under their parent (spaces/family/contacts/...). For a
+	// top-level key (no parent) it is a plain flat lookup, unchanged.
+	colDef, err := resolveScopedCollection(r.def, key.Collection(), key.Parent())
+	if err != nil {
+		return nil, "", err
 	}
 	if colDef.RecordFile == nil {
-		return nil, "", fmt.Errorf("dalgo2ingitdb: collection %q has no record_file definition", collectionID)
+		return nil, "", fmt.Errorf("dalgo2ingitdb: collection %q has no record_file definition", key.Collection())
 	}
 	recordKey := fmt.Sprintf("%v", key.ID)
 	return colDef, recordKey, nil

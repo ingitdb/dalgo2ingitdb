@@ -1,0 +1,10 @@
+record_file:
+    name: '{key}.yaml'
+    format: yaml
+    type: map[string]any
+columns:
+    name:
+        type: string
+        required: true
+columns_order:
+    - name
