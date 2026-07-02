@@ -430,9 +430,13 @@ func collectionFromQuery(def *ingitdb.Definition, query dal.Query) (*ingitdb.Col
 		return nil, fmt.Errorf("dalgo2ingitdb: FROM source must be a CollectionRef, got %T", base)
 	}
 	collectionID := colRef.Name()
-	colDef, exists := def.Collections[collectionID]
-	if !exists {
-		return nil, fmt.Errorf("dalgo2ingitdb: collection %q not found in definition", collectionID)
+	// A query over a nested subcollection carries its parent record key in the
+	// CollectionRef; resolveScopedCollection scopes the DirPath to that parent so
+	// the query reads only that parent's records (spaces/family/contacts/...),
+	// not every space's. Top-level queries (parent == nil) are a flat lookup.
+	colDef, err := resolveScopedCollection(def, collectionID, colRef.Parent())
+	if err != nil {
+		return nil, err
 	}
 	if colDef.RecordFile == nil {
 		return nil, fmt.Errorf("dalgo2ingitdb: collection %q has no record_file definition", collectionID)

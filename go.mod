@@ -3,7 +3,7 @@ module github.com/ingitdb/dalgo2ingitdb
 go 1.26.0
 
 require (
-	github.com/dal-go/dalgo v0.46.1
+	github.com/dal-go/dalgo v0.62.2
 	github.com/gofrs/flock v0.13.0
 	github.com/ingitdb/ingitdb-go/ingitdb v0.0.1
 	github.com/ingr-io/ingr-go v0.0.2
