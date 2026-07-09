@@ -26,7 +26,13 @@ import (
 // any filesystem write. With ddl.IfNotExists, an existing collection is a
 // no-op; without it, an existing collection is an error.
 //
-// After the definition.yaml write succeeds, the collection is registered
+// A path-form name ("spaces/ext") declares a SUBCOLLECTION: the definition
+// is written under the root collection's schema directory
+// (<root>/.collection/subcollections/<sub>[/subcollections/...]/definition.yaml),
+// where the validator-backed reader discovers it. The root collection must
+// already exist; subcollections are not registered in root-collections.yaml.
+//
+// After a root definition.yaml write succeeds, the collection is registered
 // in <projectPath>/.ingitdb/root-collections.yaml (REQ:auto-register-in-root-collections)
 // so the validator-backed CollectionsReader picks it up. Registry conflicts
 // (an existing entry mapping the same name to a non-default path) return
@@ -36,6 +42,10 @@ func (db *Database) CreateCollection(_ context.Context, c dbschema.CollectionDef
 	options := ddl.ResolveOptions(opts...)
 	if err := validateCollectionName(c.Name); err != nil {
 		return fmt.Errorf("CreateCollection: %w", err)
+	}
+
+	if segments := strings.Split(c.Name, "/"); len(segments) > 1 {
+		return db.createSubCollection(segments, c, options)
 	}
 
 	// Validate all field types up front. Any unrepresentable type aborts
@@ -322,6 +332,50 @@ func validateCollectionName(name string) (err error) {
 // buildIngitdbCollectionDef converts a dbschema.CollectionDef to an
 // ingitdb.CollectionDef ready for YAML marshaling. Fails if any field
 // has a type that cannot be represented in ingitdb (e.g. dbschema.Null).
+// createSubCollection writes the definition.yaml for a nested collection
+// declared with a path-form name (e.g. "spaces/ext"). The definition lands at
+// <projectPath>/<root>/.collection/subcollections/<sub>[/subcollections/...]/definition.yaml
+// so loadSubCollections discovers it when the root collection's definition is
+// read. Only the leaf name becomes the collection ID.
+func (db *Database) createSubCollection(segments []string, c dbschema.CollectionDef, options ddl.Options) error {
+	rootDefPath := filepath.Join(db.projectPath, segments[0], ingitdb.SchemaDir, ingitdb.CollectionDefFileName)
+	if _, err := os.Stat(rootDefPath); err != nil {
+		return fmt.Errorf("CreateCollection %q: root collection %q must exist first: %w", c.Name, segments[0], err)
+	}
+
+	leaf := c
+	leaf.Name = segments[len(segments)-1]
+	colDef, err := buildIngitdbCollectionDef(leaf)
+	if err != nil {
+		return fmt.Errorf("CreateCollection %q: %w", c.Name, err)
+	}
+
+	schemaDir := filepath.Join(db.projectPath, segments[0], ingitdb.SchemaDir)
+	for _, seg := range segments[1:] {
+		schemaDir = filepath.Join(schemaDir, "subcollections", seg)
+	}
+	defPath := filepath.Join(schemaDir, ingitdb.CollectionDefFileName)
+
+	if _, statErr := os.Stat(defPath); statErr == nil {
+		if options.IfNotExists {
+			return nil
+		}
+		return fmt.Errorf("CreateCollection: collection %q already exists", c.Name)
+	} else if !errors.Is(statErr, fs.ErrNotExist) {
+		return fmt.Errorf("CreateCollection: stat %s: %w", defPath, statErr)
+	}
+
+	if err := osMkdirAll(schemaDir, 0o755); err != nil {
+		return fmt.Errorf("CreateCollection: mkdir %s: %w", schemaDir, err)
+	}
+	if len(c.Indexes) > 0 {
+		log.Printf("dalgo2ingitdb: CreateCollection %q ignoring %d index declaration(s) — inGitDB has no per-collection index support", c.Name, len(c.Indexes))
+	}
+	return withExclusiveLock(defPath, func() error {
+		return writeCollectionDefYAML(defPath, colDef)
+	})
+}
+
 func buildIngitdbCollectionDef(c dbschema.CollectionDef) (*ingitdb.CollectionDef, error) {
 	cols := make(map[string]*ingitdb.ColumnDef, len(c.Fields))
 	order := make([]string, 0, len(c.Fields))

@@ -2,6 +2,7 @@ package dalgo2ingitdb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -19,6 +20,11 @@ import (
 func executeQueryToRecordsReader(_ context.Context, r readonlyTx, query dal.Query) (dal.RecordsReader, error) {
 	colDef, err := collectionFromQuery(r.def, query)
 	if err != nil {
+		if errors.Is(err, errCollectionNotInDefinition) {
+			// Querying a collection that does not exist yields no rows, the
+			// same as querying an empty collection (matches dalgo2memory).
+			return dal.EmptyReader{}, nil
+		}
 		return nil, err
 	}
 	// collectionFromQuery already validated that query is a StructuredQuery.

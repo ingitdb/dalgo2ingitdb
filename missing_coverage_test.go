@@ -98,7 +98,6 @@ func TestWithExclusiveLock_AcquireError(t *testing.T) {
 	}
 }
 
-
 // ---------------------------------------------------------------------------
 // query.go — readAllSingleRecords uncovered branches:
 //   - IsExcluded (line 92): a matching ExcludeRegex skips the file
@@ -1461,7 +1460,8 @@ func TestReadwriteTx_Insert_MapOfRecords_ReadError(t *testing.T) {
 }
 
 // TestReadwriteTx_UpdateRecord_ApplyUpdatesError exercises the applyUpdates
-// error branch in UpdateRecord (tx_readwrite.go line 191-193).
+// error branch in UpdateRecord (tx_readwrite.go): a FieldPath update that
+// walks through a non-map intermediate triggers an error.
 func TestReadwriteTx_UpdateRecord_ApplyUpdatesError(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -1480,13 +1480,13 @@ func TestReadwriteTx_UpdateRecord_ApplyUpdatesError(t *testing.T) {
 			Collections: map[string]*ingitdb.CollectionDef{"c": colDef},
 		},
 	}}
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("c", "k"), map[string]any{})
+	// "meta" is a scalar string; navigating through it as a map must error.
+	rec := dal.NewRecordWithData(dal.NewKeyWithID("c", "k"), map[string]any{"meta": "not-a-map"})
 	rec.SetError(nil)
-	// Nested field path triggers an error in applyUpdates.
-	ups := []update.Update{update.ByFieldPath(update.FieldPath{"nested", "key"}, "val")}
+	ups := []update.Update{update.ByFieldPath(update.FieldPath{"meta", "key"}, "val")}
 	err := tx.UpdateRecord(context.Background(), rec, ups)
 	if err == nil {
-		t.Fatal("UpdateRecord: want error for nested field path")
+		t.Fatal("UpdateRecord: want error when intermediate is not a map")
 	}
 }
 
@@ -1775,7 +1775,6 @@ func TestReadAllSingleRecords_ReadError(t *testing.T) {
 		t.Fatal("readAllSingleRecords: want error for corrupt YAML file")
 	}
 }
-
 
 // ---------------------------------------------------------------------------
 // ParseBatchYAMLStream — invalid YAML document error

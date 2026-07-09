@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 )
 
 // gitCommitPaths stages exactly the given record-file paths in the git
@@ -24,6 +25,15 @@ func gitCommitPaths(ctx context.Context, repoDir string, paths []string, message
 	// directories (and in tests) without requiring a git repository.
 	if !isInsideGitWorkTree(ctx, repoDir) {
 		return nil
+	}
+	// Tracked paths are relative to the process working directory (they are
+	// built from the projectPath the Database was opened with), while git is
+	// invoked with -C repoDir. Absolute pathspecs resolve correctly in both
+	// worlds.
+	for i, p := range staged {
+		if abs, err := filepath.Abs(p); err == nil {
+			staged[i] = abs
+		}
 	}
 	addArgs := append([]string{"-C", repoDir, "add", "--"}, staged...)
 	if out, err := exec.CommandContext(ctx, "git", addArgs...).CombinedOutput(); err != nil {

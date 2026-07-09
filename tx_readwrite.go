@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"time"
 
 	"github.com/dal-go/dalgo/dal"
 	dalrecord "github.com/dal-go/dalgo/record"
@@ -13,6 +14,10 @@ import (
 
 	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
+
+// ErrRecordAlreadyExists is returned (wrapped) by Insert when a record with
+// the same key already exists. Callers detect it with errors.Is.
+var ErrRecordAlreadyExists = errors.New("record already exists")
 
 // readwriteTx is the read-write transaction handle. It embeds readonlyTx
 // to inherit Get / Exists / GetMulti / query support; write methods are
@@ -125,7 +130,7 @@ func (r readwriteTx) Insert(_ context.Context, record dal.Record, _ ...dal.Inser
 	switch colDef.RecordFile.RecordType {
 	case ingitdb.SingleRecord:
 		if _, statErr := os.Stat(path); statErr == nil {
-			return fmt.Errorf("dalgo2ingitdb: record already exists: %s", path)
+			return fmt.Errorf("dalgo2ingitdb: %w: %s", ErrRecordAlreadyExists, path)
 		} else if !errors.Is(statErr, fs.ErrNotExist) {
 			return fmt.Errorf("dalgo2ingitdb: stat %s: %w", path, statErr)
 		}
@@ -141,7 +146,7 @@ func (r readwriteTx) Insert(_ context.Context, record dal.Record, _ ...dal.Inser
 			allRecords = make(map[string]map[string]any)
 		}
 		if _, exists := allRecords[recordKey]; exists {
-			return fmt.Errorf("dalgo2ingitdb: record already exists: %s in %s", recordKey, path)
+			return fmt.Errorf("dalgo2ingitdb: %w: %s in %s", ErrRecordAlreadyExists, recordKey, path)
 		}
 		allRecords[recordKey] = ingitdb.ApplyLocaleToWrite(data, colDef.Columns)
 		if err := writeMapOfRecordsFile(path, colDef, allRecords); err != nil {
@@ -170,6 +175,11 @@ func (r readwriteTx) InsertMulti(ctx context.Context, records []dal.Record, opts
 func (r readwriteTx) Delete(_ context.Context, key *dal.Key) error {
 	colDef, recordKey, err := r.resolveCollection(key)
 	if err != nil {
+		if errors.Is(err, errCollectionNotInDefinition) {
+			// A record in an unknown collection cannot exist; Delete is
+			// idempotent per the dalgo contract, so this is a no-op.
+			return nil
+		}
 		return err
 	}
 	parentExists, err := foreignKeyTargetExists(colDef, recordKey)
@@ -307,21 +317,182 @@ func (r readwriteTx) UpdateMulti(ctx context.Context, keys []*dal.Key, updates [
 	return nil
 }
 
-// applyUpdates mutates data according to updates. Only single-segment
-// FieldName paths are honoured; nested FieldPath updates return an error.
+// applyUpdates mutates data according to updates. It supports:
+//   - Single-segment FieldName updates (existing behaviour)
+//   - Multi-segment FieldPath updates with auto-created intermediate maps
+//   - update.DeleteField sentinel as Value() → deletes the (possibly nested) field
+//   - dal.Increment transform → numeric add (nil/missing counts as 0)
+//   - update.ServerTimestamp sentinel → RFC3339Nano UTC string
 func applyUpdates(data map[string]any, updates []update.Update) error {
 	for _, u := range updates {
 		name := u.FieldName()
-		if name == "" {
-			path := u.FieldPath()
-			if len(path) != 1 {
-				return fmt.Errorf("dalgo2ingitdb: nested field paths are not supported (%v)", path)
+		if name != "" {
+			// Single top-level field name.
+			if err := applyFieldUpdate(data, []string{name}, u.Value()); err != nil {
+				return err
 			}
-			name = path[0]
+		} else {
+			path := u.FieldPath()
+			if len(path) == 0 {
+				// No name and no path — skip silently (defensive).
+				continue
+			}
+			if err := applyFieldUpdate(data, path, u.Value()); err != nil {
+				return err
+			}
 		}
-		data[name] = u.Value()
 	}
 	return nil
+}
+
+// applyFieldUpdate applies a single field update described by path and value to
+// the provided map. It navigates (and creates, for set operations) intermediate
+// maps as needed.
+func applyFieldUpdate(root map[string]any, path []string, value any) error {
+	// Check for DeleteField sentinel by identity comparison.
+	if value == update.DeleteField {
+		return applyDelete(root, path)
+	}
+	// Check for ServerTimestamp sentinel by identity comparison.
+	if value == update.ServerTimestamp {
+		value = time.Now().UTC().Format(time.RFC3339Nano)
+	} else if t, ok := dal.IsTransform(value); ok {
+		// Check for dal transforms (e.g. Increment).
+		if t.Name() == "increment" {
+			return applyIncrement(root, path, t.Value())
+		}
+		return fmt.Errorf("dalgo2ingitdb: unsupported transform %q", t.Name())
+	}
+
+	// Regular set: navigate/create intermediate maps, then assign leaf.
+	m := root
+	for i, segment := range path[:len(path)-1] {
+		existing, ok := m[segment]
+		if !ok || existing == nil {
+			// Create missing intermediate map.
+			child := make(map[string]any)
+			m[segment] = child
+			m = child
+			continue
+		}
+		child, isMap := existing.(map[string]any)
+		if !isMap {
+			return fmt.Errorf("dalgo2ingitdb: field %q at path position %d is not a map (got %T)", segment, i, existing)
+		}
+		m = child
+	}
+	m[path[len(path)-1]] = value
+	return nil
+}
+
+// applyDelete removes the leaf element at path from root. Missing intermediate
+// maps or a missing leaf are treated as no-ops (idempotent).
+func applyDelete(root map[string]any, path []string) error {
+	m := root
+	for _, segment := range path[:len(path)-1] {
+		existing, ok := m[segment]
+		if !ok || existing == nil {
+			// Path does not exist — nothing to delete.
+			return nil
+		}
+		child, isMap := existing.(map[string]any)
+		if !isMap {
+			// Non-map intermediate on a delete path: treat as no-op.
+			return nil
+		}
+		m = child
+	}
+	delete(m, path[len(path)-1])
+	return nil
+}
+
+// applyIncrement adds the transform's numeric delta to the current value at
+// path. A nil or missing field counts as 0. A non-numeric existing value is
+// an error.
+func applyIncrement(root map[string]any, path []string, delta any) error {
+	// Navigate to the parent map, creating intermediates.
+	m := root
+	for i, segment := range path[:len(path)-1] {
+		existing, ok := m[segment]
+		if !ok || existing == nil {
+			child := make(map[string]any)
+			m[segment] = child
+			m = child
+			continue
+		}
+		child, isMap := existing.(map[string]any)
+		if !isMap {
+			return fmt.Errorf("dalgo2ingitdb: field %q at path position %d is not a map (got %T)", segment, i, existing)
+		}
+		m = child
+	}
+
+	leaf := path[len(path)-1]
+	existing := m[leaf]
+
+	// Convert delta to float64 for uniform arithmetic.
+	deltaF, ok := toNumericFloat64(delta)
+	if !ok {
+		return fmt.Errorf("dalgo2ingitdb: increment delta %v (%T) is not numeric", delta, delta)
+	}
+
+	var currentF float64
+	if existing != nil {
+		currentF, ok = toNumericFloat64(existing)
+		if !ok {
+			return fmt.Errorf("dalgo2ingitdb: increment target field %q has non-numeric value %v (%T)", leaf, existing, existing)
+		}
+	}
+
+	result := currentF + deltaF
+
+	// Preserve integer type if both delta and current were integral.
+	if isIntegral(result) {
+		switch delta.(type) {
+		case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+			m[leaf] = int64(result)
+			return nil
+		}
+	}
+	m[leaf] = result
+	return nil
+}
+
+// toNumericFloat64 converts a numeric value to float64. Returns (0, false) for
+// non-numeric types.
+func toNumericFloat64(v any) (float64, bool) {
+	switch n := v.(type) {
+	case int:
+		return float64(n), true
+	case int8:
+		return float64(n), true
+	case int16:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case uint:
+		return float64(n), true
+	case uint8:
+		return float64(n), true
+	case uint16:
+		return float64(n), true
+	case uint32:
+		return float64(n), true
+	case uint64:
+		return float64(n), true
+	case float32:
+		return float64(n), true
+	case float64:
+		return n, true
+	}
+	return 0, false
+}
+
+// isIntegral reports whether f represents a whole number.
+func isIntegral(f float64) bool {
+	return f == float64(int64(f))
 }
 
 var _ dal.ReadwriteTransaction = (*readwriteTx)(nil)

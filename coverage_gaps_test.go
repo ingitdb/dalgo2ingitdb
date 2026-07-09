@@ -10,6 +10,7 @@ package dalgo2ingitdb
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -596,12 +597,19 @@ func TestApplyUpdates_FieldPath(t *testing.T) {
 	}
 }
 
-func TestApplyUpdates_NestedFieldPathRejected(t *testing.T) {
+func TestApplyUpdates_NestedFieldPathCreatesIntermediates(t *testing.T) {
 	t.Parallel()
 	data := map[string]any{}
 	ups := []update.Update{update.ByFieldPath(update.FieldPath{"a", "b"}, 1)}
-	if err := applyUpdates(data, ups); err == nil {
-		t.Fatal("want error for nested field path")
+	if err := applyUpdates(data, ups); err != nil {
+		t.Fatalf("applyUpdates with nested FieldPath: %v", err)
+	}
+	child, ok := data["a"].(map[string]any)
+	if !ok {
+		t.Fatalf("data[a]: got %T, want map[string]any", data["a"])
+	}
+	if child["b"] != 1 {
+		t.Errorf("data[a][b]: got %v, want 1", child["b"])
 	}
 }
 
@@ -1055,9 +1063,12 @@ func TestExecuteQueryToRecordsReader_CollectionNotFound(t *testing.T) {
 		SelectIntoRecord(func() dal.Record {
 			return dal.NewRecordWithData(dal.NewKeyWithID("noexist", ""), map[string]any{})
 		})
-	_, err := executeQueryToRecordsReader(context.Background(), tx, q)
-	if err == nil {
-		t.Fatal("want error for missing collection")
+	reader, err := executeQueryToRecordsReader(context.Background(), tx, q)
+	if err != nil {
+		t.Fatalf("querying a missing collection must yield no rows, not an error (matches dalgo2memory), got: %v", err)
+	}
+	if _, nextErr := reader.Next(); !errors.Is(nextErr, dal.ErrNoMoreRecords) {
+		t.Fatalf("want empty reader for missing collection, got next error: %v", nextErr)
 	}
 }
 
@@ -2403,17 +2414,17 @@ func TestDelete_UnknownCollection(t *testing.T) {
 	t.Parallel()
 	tx := makeUnknownCollectionTx()
 	err := tx.Delete(context.Background(), dal.NewKeyWithID("no_such_col", "k"))
-	if err == nil {
-		t.Fatal("Delete: want error for unknown collection")
+	if err != nil {
+		t.Fatalf("Delete: unknown collection must be an idempotent no-op (a record there cannot exist), got: %v", err)
 	}
 }
 
-func TestDeleteMulti_PropagatesDeleteError(t *testing.T) {
+func TestDeleteMulti_UnknownCollectionNoOp(t *testing.T) {
 	t.Parallel()
 	tx := makeUnknownCollectionTx()
 	err := tx.DeleteMulti(context.Background(), []*dal.Key{dal.NewKeyWithID("no_such_col", "k")})
-	if err == nil {
-		t.Fatal("DeleteMulti: want error propagated from Delete")
+	if err != nil {
+		t.Fatalf("DeleteMulti: unknown collection must be an idempotent no-op, got: %v", err)
 	}
 }
 
@@ -2454,8 +2465,9 @@ func TestUpdate_RecordNotFound(t *testing.T) {
 	}
 }
 
-// TestUpdate_ApplyUpdatesError covers tx_readwrite.go line 178-180:
-// applyUpdates returning an error due to a nested field path.
+// TestUpdate_ApplyUpdatesError covers tx_readwrite.go applyUpdates returning
+// an error. This exercises the case where a nested FieldPath update encounters
+// a non-map intermediate value (which is an error).
 func TestUpdate_ApplyUpdatesError(t *testing.T) {
 	t.Parallel()
 	tx, root := makeReadwriteTx(t)
@@ -2463,14 +2475,14 @@ func TestUpdate_ApplyUpdatesError(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+	// "name" is a scalar string; using it as an intermediate map must error.
 	if err := os.WriteFile(filepath.Join(dir, "z.yaml"), []byte("name: old\n"), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	// A nested field path (>1 segment) is not supported and triggers an error in applyUpdates.
 	err := tx.Update(context.Background(), dal.NewKeyWithID("items", "z"),
-		[]update.Update{update.ByFieldPath(update.FieldPath{"nested", "key"}, "val")})
+		[]update.Update{update.ByFieldPath(update.FieldPath{"name", "sub"}, "val")})
 	if err == nil {
-		t.Fatal("Update: want error for nested field path")
+		t.Fatal("Update: want error when intermediate is not a map")
 	}
 }
 
