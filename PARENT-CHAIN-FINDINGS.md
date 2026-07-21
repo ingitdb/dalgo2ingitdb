@@ -41,7 +41,7 @@ just the dalgo key resolver:
    is stored as a single data directory per *definition*, unlike Firestore where
    `spaces/{id}/contacts` is one collection **per parent doc**.
 
-`dal.Key` fully exposes what we'd need — `Parent() *Key`, `Collection()`,
+`record.Key` fully exposes what we'd need — `Parent() *Key`, `Collection()`,
 `CollectionPath()` (→ `spaces/contacts`), `String()` (→ `spaces/family/contacts/c1`),
 `ID` — so the information to scope correctly is available at the adapter; the
 missing piece is where to put the parent-record id on disk.

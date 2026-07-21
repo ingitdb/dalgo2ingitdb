@@ -23,9 +23,10 @@ import (
 	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/dalgo/dbschema"
 	"github.com/dal-go/dalgo/ddl"
-	"github.com/dal-go/dalgo/update"
+	"github.com/dal-go/record/update"
 	"github.com/ingr-io/ingr-go/ingr"
 
+	"github.com/dal-go/record"
 	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
@@ -255,10 +256,10 @@ func TestBuildKeyExtractor_NoTemplateInSubdir(t *testing.T) {
 // error when evaluateCondition fails (e.g. unsupported condition type).
 func TestApplyWhere_EvaluateConditionError(t *testing.T) {
 	t.Parallel()
-	key := dal.NewKeyWithID("c", "k")
-	rec := dal.NewRecordWithData(key, map[string]any{"v": 1})
+	key := record.NewKeyWithID("c", "k")
+	rec := record.NewRecordWithData(key, map[string]any{"v": 1})
 	rec.SetError(nil)
-	records := []dal.Record{rec}
+	records := []record.Record{rec}
 	_, err := applyWhere(records, unsupportedCond{})
 	if err == nil {
 		t.Fatal("applyWhere: want error for unsupported condition type")
@@ -315,8 +316,8 @@ func TestEvaluateGroupCondition_And_ViaQuery(t *testing.T) {
 	q := dal.From(dal.NewRootCollectionRef("things", "")).NewQuery().
 		WhereField("val", dal.GreaterThen, 5).
 		WhereField("val", dal.LessThen, 15).
-		SelectIntoRecord(func() dal.Record {
-			return dal.NewRecordWithData(dal.NewKeyWithID("things", ""), map[string]any{})
+		SelectIntoRecord(func() record.Record {
+			return record.NewRecordWithData(record.NewKeyWithID("things", ""), map[string]any{})
 		})
 	reader, err := executeQueryToRecordsReader(context.Background(), tx, q)
 	if err != nil {
@@ -609,7 +610,7 @@ func TestDeleteSingleRecordFile_StatNonExistError(t *testing.T) {
 	if err == nil {
 		t.Fatal("want error for stat failure on non-existent-not-ErrNotExist path")
 	}
-	if err == dal.ErrRecordNotFound {
+	if err == record.ErrRecordNotFound {
 		t.Errorf("should not be ErrRecordNotFound for a stat permission error")
 	}
 }
@@ -1258,7 +1259,7 @@ func TestReadonlyTx_Get_SingleRecord_ReadError(t *testing.T) {
 			Collections: map[string]*ingitdb.CollectionDef{"items": colDef},
 		},
 	}
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("items", "k"), map[string]any{})
+	rec := record.NewRecordWithData(record.NewKeyWithID("items", "k"), map[string]any{})
 	err = tx.Get(context.Background(), rec)
 	if err == nil {
 		t.Fatal("Get: want error for corrupt YAML record")
@@ -1300,7 +1301,7 @@ func TestReadonlyTx_Exists_SingleRecord_ReadError(t *testing.T) {
 			Collections: map[string]*ingitdb.CollectionDef{"items": colDef},
 		},
 	}
-	_, err = tx.Exists(context.Background(), dal.NewKeyWithID("items", "k"))
+	_, err = tx.Exists(context.Background(), record.NewKeyWithID("items", "k"))
 	if err == nil {
 		t.Fatal("Exists: want error for corrupt YAML record")
 	}
@@ -1336,7 +1337,7 @@ func TestReadwriteTx_Set_SingleRecord_WriteError(t *testing.T) {
 			Collections: map[string]*ingitdb.CollectionDef{"c": colDef},
 		},
 	}}
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("c", "k"), map[string]any{"x": 1})
+	rec := record.NewRecordWithData(record.NewKeyWithID("c", "k"), map[string]any{"x": 1})
 	err := tx.Set(context.Background(), rec)
 	if err == nil {
 		t.Fatal("Set: want error for unsupported format")
@@ -1373,7 +1374,7 @@ func TestReadwriteTx_Set_MapOfRecords_ReadError(t *testing.T) {
 			Collections: map[string]*ingitdb.CollectionDef{"scores": colDef},
 		},
 	}}
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("scores", "alice"), map[string]any{"score": 1})
+	rec := record.NewRecordWithData(record.NewKeyWithID("scores", "alice"), map[string]any{"score": 1})
 	err = tx.Set(context.Background(), rec)
 	if err == nil {
 		t.Fatal("Set MapOfRecords: want error for corrupt file")
@@ -1415,7 +1416,7 @@ func TestReadwriteTx_Insert_SingleRecord_StatError(t *testing.T) {
 			Collections: map[string]*ingitdb.CollectionDef{"c": colDef},
 		},
 	}}
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("c", "k"), map[string]any{"x": 1})
+	rec := record.NewRecordWithData(record.NewKeyWithID("c", "k"), map[string]any{"x": 1})
 	err = tx.Insert(context.Background(), rec)
 	if err == nil {
 		t.Fatal("Insert: want error for stat permission failure")
@@ -1452,7 +1453,7 @@ func TestReadwriteTx_Insert_MapOfRecords_ReadError(t *testing.T) {
 			Collections: map[string]*ingitdb.CollectionDef{"scores": colDef},
 		},
 	}}
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("scores", "alice"), map[string]any{"score": 1})
+	rec := record.NewRecordWithData(record.NewKeyWithID("scores", "alice"), map[string]any{"score": 1})
 	err = tx.Insert(context.Background(), rec)
 	if err == nil {
 		t.Fatal("Insert MapOfRecords: want error for corrupt file")
@@ -1481,7 +1482,7 @@ func TestReadwriteTx_UpdateRecord_ApplyUpdatesError(t *testing.T) {
 		},
 	}}
 	// "meta" is a scalar string; navigating through it as a map must error.
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("c", "k"), map[string]any{"meta": "not-a-map"})
+	rec := record.NewRecordWithData(record.NewKeyWithID("c", "k"), map[string]any{"meta": "not-a-map"})
 	rec.SetError(nil)
 	ups := []update.Update{update.ByFieldPath(update.FieldPath{"meta", "key"}, "val")}
 	err := tx.UpdateRecord(context.Background(), rec, ups)
@@ -1940,7 +1941,7 @@ func TestReadwriteTx_Delete_MapOfRecords_WriteError(t *testing.T) {
 	// Document: the writeMapOfRecordsFile error in Delete is unreachable without
 	// a TOCTOU race because the read must succeed before write is attempted,
 	// and they use the same format.
-	err = tx.Delete(context.Background(), dal.NewKeyWithID("scores", "alice"))
+	err = tx.Delete(context.Background(), record.NewKeyWithID("scores", "alice"))
 	if err == nil {
 		t.Fatal("Delete MapOfRecords: want error for unsupported format")
 	}
@@ -2306,8 +2307,8 @@ func queryWithCondition(t *testing.T, conds ...dal.Condition) (readonlyTx, dal.Q
 	}
 	q := dal.From(dal.NewRootCollectionRef("things", "")).NewQuery().
 		Where(conds...).
-		SelectIntoRecord(func() dal.Record {
-			return dal.NewRecordWithData(dal.NewKeyWithID("things", ""), map[string]any{})
+		SelectIntoRecord(func() record.Record {
+			return record.NewRecordWithData(record.NewKeyWithID("things", ""), map[string]any{})
 		})
 	return tx, q
 }
@@ -2524,7 +2525,7 @@ func TestReadonlyTx_Get_MapOfRecords_ReadError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("scores", "alice"), map[string]any{})
+	rec := record.NewRecordWithData(record.NewKeyWithID("scores", "alice"), map[string]any{})
 	err = tx.Get(context.Background(), rec)
 	if err == nil {
 		t.Fatal("Get MapOfRecords: want error for corrupt file")
@@ -2745,8 +2746,8 @@ func TestExecuteQueryToRecordsReader_ReadError(t *testing.T) {
 		},
 	}
 	q := dal.From(dal.NewRootCollectionRef("scores", "")).NewQuery().
-		SelectIntoRecord(func() dal.Record {
-			return dal.NewRecordWithData(dal.NewKeyWithID("scores", ""), map[string]any{})
+		SelectIntoRecord(func() record.Record {
+			return record.NewRecordWithData(record.NewKeyWithID("scores", ""), map[string]any{})
 		})
 	_, err = executeQueryToRecordsReader(context.Background(), tx, q)
 	if err == nil {
@@ -2798,7 +2799,7 @@ func TestReadonlyTx_Get_SingleRecord_StatError(t *testing.T) {
 			Collections: map[string]*ingitdb.CollectionDef{"items": colDef},
 		},
 	}
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("items", "k"), map[string]any{})
+	rec := record.NewRecordWithData(record.NewKeyWithID("items", "k"), map[string]any{})
 	err = tx.Get(context.Background(), rec)
 	if err == nil {
 		t.Fatal("Get: want error for stat permission failure")
@@ -2835,7 +2836,7 @@ func TestReadonlyTx_Exists_MapOfRecords_ReadError(t *testing.T) {
 			Collections: map[string]*ingitdb.CollectionDef{"scores": colDef},
 		},
 	}
-	_, err = tx.Exists(context.Background(), dal.NewKeyWithID("scores", "alice"))
+	_, err = tx.Exists(context.Background(), record.NewKeyWithID("scores", "alice"))
 	if err == nil {
 		t.Fatal("Exists MapOfRecords: want error for corrupt file")
 	}
@@ -2886,7 +2887,7 @@ func TestReadwriteTx_Set_MapOfRecords_WriteError(t *testing.T) {
 			Collections: map[string]*ingitdb.CollectionDef{"scores": colDef},
 		},
 	}}
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("scores", "bob"), map[string]any{"score": 5})
+	rec := record.NewRecordWithData(record.NewKeyWithID("scores", "bob"), map[string]any{"score": 5})
 	err = tx.Set(context.Background(), rec)
 	if err == nil {
 		t.Fatal("Set MapOfRecords: want error when write fails")
@@ -2913,7 +2914,7 @@ func TestReadwriteTx_Insert_SingleRecord_WriteError(t *testing.T) {
 			Collections: map[string]*ingitdb.CollectionDef{"c": colDef},
 		},
 	}}
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("c", "k"), map[string]any{"x": 1})
+	rec := record.NewRecordWithData(record.NewKeyWithID("c", "k"), map[string]any{"x": 1})
 	err := tx.Insert(context.Background(), rec)
 	if err == nil {
 		t.Fatal("Insert SingleRecord: want error for unsupported format")
@@ -2962,7 +2963,7 @@ func TestReadwriteTx_Insert_MapOfRecords_WriteError(t *testing.T) {
 			Collections: map[string]*ingitdb.CollectionDef{"scores": colDef},
 		},
 	}}
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("scores", "bob"), map[string]any{"score": 5})
+	rec := record.NewRecordWithData(record.NewKeyWithID("scores", "bob"), map[string]any{"score": 5})
 	err = tx.Insert(context.Background(), rec)
 	if err == nil {
 		t.Fatal("Insert MapOfRecords: want error when write fails")

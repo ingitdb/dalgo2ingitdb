@@ -6,8 +6,8 @@ import (
 	"fmt"
 
 	"github.com/dal-go/dalgo/dal"
-	dalrecord "github.com/dal-go/dalgo/record"
 	"github.com/dal-go/dalgo/recordset"
+	dalrecord2 "github.com/dal-go/record"
 
 	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
@@ -33,17 +33,17 @@ type readonlyTx struct {
 func (r readonlyTx) Options() dal.TransactionOptions { return r.opts }
 
 // Get loads a single record. SingleRecord and MapOfRecords layouts are
-// supported. A missing record sets dal.ErrRecordNotFound on the record AND
+// supported. A missing record sets record.ErrRecordNotFound on the record AND
 // returns it, per the dalgo Getter contract (dalgo end-to-end singleGetTest
 // checks dal.IsNotFound on the returned error).
-func (r readonlyTx) Get(_ context.Context, record dal.Record) error {
+func (r readonlyTx) Get(_ context.Context, record dalrecord2.Record) error {
 	colDef, recordKey, err := r.resolveCollection(record.Key())
 	if err != nil {
 		if errors.Is(err, errCollectionNotInDefinition) {
 			// A record in an unknown collection cannot exist: report not-found
 			// so GetMulti continues and callers see Exists()==false.
-			record.SetError(dal.ErrRecordNotFound)
-			return dal.ErrRecordNotFound
+			record.SetError(dalrecord2.ErrRecordNotFound)
+			return dalrecord2.ErrRecordNotFound
 		}
 		return err
 	}
@@ -56,8 +56,8 @@ func (r readonlyTx) Get(_ context.Context, record dal.Record) error {
 			return readErr
 		}
 		if !found {
-			record.SetError(dal.ErrRecordNotFound)
-			return dal.ErrRecordNotFound
+			record.SetError(dalrecord2.ErrRecordNotFound)
+			return dalrecord2.ErrRecordNotFound
 		}
 		record.SetError(nil)
 		normalized := ingitdb.ApplyLocaleToRead(data, colDef.Columns)
@@ -66,7 +66,7 @@ func (r readonlyTx) Get(_ context.Context, record dal.Record) error {
 			record.SetError(computeErr)
 			return computeErr
 		}
-		if err := dalrecord.MapToData(record.Data(), computed); err != nil {
+		if err := dalrecord2.MapToData(record.Data(), computed); err != nil {
 			record.SetError(err)
 			return err
 		}
@@ -79,8 +79,8 @@ func (r readonlyTx) Get(_ context.Context, record dal.Record) error {
 		}
 		recordData, exists := allRecords[recordKey]
 		if !exists {
-			record.SetError(dal.ErrRecordNotFound)
-			return dal.ErrRecordNotFound
+			record.SetError(dalrecord2.ErrRecordNotFound)
+			return dalrecord2.ErrRecordNotFound
 		}
 		record.SetError(nil)
 		normalized := ingitdb.ApplyLocaleToRead(recordData, colDef.Columns)
@@ -89,7 +89,7 @@ func (r readonlyTx) Get(_ context.Context, record dal.Record) error {
 			record.SetError(computeErr)
 			return computeErr
 		}
-		if err := dalrecord.MapToData(record.Data(), computed); err != nil {
+		if err := dalrecord2.MapToData(record.Data(), computed); err != nil {
 			record.SetError(err)
 			return err
 		}
@@ -100,7 +100,7 @@ func (r readonlyTx) Get(_ context.Context, record dal.Record) error {
 }
 
 // Exists reports whether the record identified by key is present on disk.
-func (r readonlyTx) Exists(_ context.Context, key *dal.Key) (bool, error) {
+func (r readonlyTx) Exists(_ context.Context, key *dalrecord2.Key) (bool, error) {
 	colDef, recordKey, err := r.resolveCollection(key)
 	if err != nil {
 		return false, err
@@ -130,12 +130,12 @@ func (r readonlyTx) Exists(_ context.Context, key *dal.Key) (bool, error) {
 // batch and is returned to the caller. Per-record ErrRecordNotFound is
 // reported via record.SetError, not as a method-level error — matching
 // the convention used by dal's reference drivers.
-func (r readonlyTx) GetMulti(ctx context.Context, records []dal.Record) error {
+func (r readonlyTx) GetMulti(ctx context.Context, records []dalrecord2.Record) error {
 	for _, rec := range records {
 		// Per-record not-found is reported via record.SetError (set inside Get),
 		// not as a batch-level error — matching the dalgo GetMulti contract
 		// (dalgo end-to-end suite). Only genuine errors abort the batch.
-		if err := r.Get(ctx, rec); err != nil && !dal.IsNotFound(err) {
+		if err := r.Get(ctx, rec); err != nil && !dalrecord2.IsNotFound(err) {
 			return err
 		}
 	}
@@ -174,7 +174,7 @@ func (r readonlyTx) ExecuteQueryToRecordsetReader(_ context.Context, query dal.Q
 
 // resolveCollection looks up the collection definition for a key and
 // renders the record key as a string.
-func (r readonlyTx) resolveCollection(key *dal.Key) (*ingitdb.CollectionDef, string, error) {
+func (r readonlyTx) resolveCollection(key *dalrecord2.Key) (*ingitdb.CollectionDef, string, error) {
 	if r.def == nil {
 		return nil, "", fmt.Errorf("dalgo2ingitdb: transaction has no loaded definition")
 	}

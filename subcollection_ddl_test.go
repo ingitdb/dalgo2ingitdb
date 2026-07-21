@@ -10,6 +10,7 @@ import (
 	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/dalgo/dbschema"
 	"github.com/dal-go/dalgo/ddl"
+	"github.com/dal-go/record"
 )
 
 // TestCreateCollection_SubCollection covers path-form names: the definition
@@ -53,10 +54,10 @@ func TestCreateCollection_SubCollection(t *testing.T) {
 	}
 
 	// Write + read a record at a nested key.
-	parent := dal.NewKeyWithID("spaces", "s1")
-	nestedKey := dal.NewKeyWithParentAndID(parent, "ext", "contactus")
+	parent := record.NewKeyWithID("spaces", "s1")
+	nestedKey := record.NewKeyWithParentAndID(parent, "ext", "contactus")
 	err = db.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
-		rec := dal.NewRecordWithData(nestedKey, map[string]any{"title": "hello"})
+		rec := record.NewRecordWithData(nestedKey, map[string]any{"title": "hello"})
 		rec.SetError(nil)
 		return tx.Insert(ctx, rec)
 	})
@@ -64,7 +65,7 @@ func TestCreateCollection_SubCollection(t *testing.T) {
 		t.Fatalf("insert at nested key: %v", err)
 	}
 	got := map[string]any{}
-	rec := dal.NewRecordWithData(nestedKey, got)
+	rec := record.NewRecordWithData(nestedKey, got)
 	if err = db.Get(ctx, rec); err != nil {
 		t.Fatalf("get nested record: %v", err)
 	}
@@ -74,7 +75,7 @@ func TestCreateCollection_SubCollection(t *testing.T) {
 
 	// Insert conflict surfaces ErrRecordAlreadyExists.
 	err = db.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
-		rec := dal.NewRecordWithData(nestedKey, map[string]any{"title": "again"})
+		rec := record.NewRecordWithData(nestedKey, map[string]any{"title": "again"})
 		rec.SetError(nil)
 		return tx.Insert(ctx, rec)
 	})
@@ -84,7 +85,7 @@ func TestCreateCollection_SubCollection(t *testing.T) {
 
 	// Delete on an unknown collection is an idempotent no-op.
 	err = db.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
-		return tx.Delete(ctx, dal.NewKeyWithID("never_created", "x"))
+		return tx.Delete(ctx, record.NewKeyWithID("never_created", "x"))
 	})
 	if err != nil {
 		t.Fatalf("delete on unknown collection should be a no-op, got: %v", err)

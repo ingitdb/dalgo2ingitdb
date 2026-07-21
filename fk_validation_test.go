@@ -11,8 +11,9 @@ import (
 	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/dalgo/dbschema"
 	"github.com/dal-go/dalgo/ddl"
-	"github.com/dal-go/dalgo/update"
+	"github.com/dal-go/record/update"
 
+	dalrecord "github.com/dal-go/record"
 	"github.com/ingitdb/dalgo2ingitdb"
 	"github.com/ingitdb/ingitdb-go/ingitdb/validator"
 )
@@ -87,8 +88,8 @@ func insertForeignKeyRecord(t *testing.T, db dal.DB, collection, key string, dat
 	t.Helper()
 	ctx := context.Background()
 	err := db.RunReadwriteTransaction(ctx, func(_ context.Context, tx dal.ReadwriteTransaction) error {
-		recordKey := dal.NewKeyWithID(collection, key)
-		record := dal.NewRecordWithData(recordKey, data)
+		recordKey := dalrecord.NewKeyWithID(collection, key)
+		record := dalrecord.NewRecordWithData(recordKey, data)
 		return tx.Insert(ctx, record)
 	})
 	return err
@@ -98,8 +99,8 @@ func setForeignKeyRecord(t *testing.T, db dal.DB, collection, key string, data m
 	t.Helper()
 	ctx := context.Background()
 	err := db.RunReadwriteTransaction(ctx, func(_ context.Context, tx dal.ReadwriteTransaction) error {
-		recordKey := dal.NewKeyWithID(collection, key)
-		record := dal.NewRecordWithData(recordKey, data)
+		recordKey := dalrecord.NewKeyWithID(collection, key)
+		record := dalrecord.NewRecordWithData(recordKey, data)
 		return tx.Set(ctx, record)
 	})
 	return err
@@ -109,7 +110,7 @@ func updateForeignKeyRecord(t *testing.T, db dal.DB, collection, key string, upd
 	t.Helper()
 	ctx := context.Background()
 	err := db.RunReadwriteTransaction(ctx, func(_ context.Context, tx dal.ReadwriteTransaction) error {
-		recordKey := dal.NewKeyWithID(collection, key)
+		recordKey := dalrecord.NewKeyWithID(collection, key)
 		return tx.Update(ctx, recordKey, updates)
 	})
 	return err
@@ -119,7 +120,7 @@ func deleteForeignKeyRecord(t *testing.T, db dal.DB, collection, key string) err
 	t.Helper()
 	ctx := context.Background()
 	err := db.RunReadwriteTransaction(ctx, func(_ context.Context, tx dal.ReadwriteTransaction) error {
-		recordKey := dal.NewKeyWithID(collection, key)
+		recordKey := dalrecord.NewKeyWithID(collection, key)
 		return tx.Delete(ctx, recordKey)
 	})
 	return err
@@ -127,8 +128,8 @@ func deleteForeignKeyRecord(t *testing.T, db dal.DB, collection, key string) err
 
 func readForeignKeyRecordData(t *testing.T, db dal.DB, collection, key string) map[string]any {
 	t.Helper()
-	recordKey := dal.NewKeyWithID(collection, key)
-	record := dal.NewRecordWithData(recordKey, map[string]any{})
+	recordKey := dalrecord.NewKeyWithID(collection, key)
+	record := dalrecord.NewRecordWithData(recordKey, map[string]any{})
 	if err := db.Get(context.Background(), record); err != nil {
 		t.Fatalf("Get %s/%s: %v", collection, key, err)
 	}

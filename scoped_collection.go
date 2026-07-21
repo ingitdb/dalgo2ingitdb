@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/dal-go/dalgo/dal"
+	"github.com/dal-go/record"
 	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
@@ -32,7 +32,7 @@ import (
 // The returned CollectionDef is a shallow copy of the schema definition with
 // only DirPath overridden; RecordFile, Columns, format, etc. still come from the
 // subcollection's own schema so encoding/decoding is unaffected.
-func resolveScopedCollection(def *ingitdb.Definition, collection string, parent *dal.Key) (*ingitdb.CollectionDef, error) {
+func resolveScopedCollection(def *ingitdb.Definition, collection string, parent *record.Key) (*ingitdb.CollectionDef, error) {
 	if def == nil {
 		return nil, fmt.Errorf("dalgo2ingitdb: transaction has no loaded definition")
 	}

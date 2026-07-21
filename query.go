@@ -11,6 +11,7 @@ import (
 
 	"github.com/dal-go/dalgo/dal"
 
+	"github.com/dal-go/record"
 	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
@@ -68,7 +69,7 @@ func executeQueryToRecordsReader(_ context.Context, r readonlyTx, query dal.Quer
 // applyGroupBy partitions records into groups keyed by the GROUP BY
 // expressions, computes aggregate columns, applies HAVING, ORDER BY, LIMIT, and
 // returns projected group records.
-func applyGroupBy(sq dal.StructuredQuery, records []dal.Record, collection string) (dal.RecordsReader, error) {
+func applyGroupBy(sq dal.StructuredQuery, records []record.Record, collection string) (dal.RecordsReader, error) {
 	groupBy := sq.GroupBy()
 	columns := sq.Columns()
 
@@ -166,10 +167,10 @@ func applyGroupBy(sq dal.StructuredQuery, records []dal.Record, collection strin
 		groups = groups[:limit]
 	}
 
-	result := make([]dal.Record, len(groups))
+	result := make([]record.Record, len(groups))
 	for i, g := range groups {
-		key := dal.NewKeyWithID(collection, fmt.Sprint(i))
-		result[i] = dal.NewRecordWithData(key, g.out).SetError(nil)
+		key := record.NewKeyWithID(collection, fmt.Sprint(i))
+		result[i] = record.NewRecordWithData(key, g.out).SetError(nil)
 	}
 	return newSliceRecordsReader(result), nil
 }
@@ -369,8 +370,8 @@ func resolveHavingExpr(e dal.Expression, out map[string]any, rows []map[string]a
 }
 
 // applyProjection reduces each record's data map to only the selected columns.
-func applyProjection(records []dal.Record, columns []dal.Column, collection string) ([]dal.Record, error) {
-	result := make([]dal.Record, len(records))
+func applyProjection(records []record.Record, columns []dal.Column, collection string) ([]record.Record, error) {
+	result := make([]record.Record, len(records))
 	for i, rec := range records {
 		data := rec.Data().(map[string]any)
 		recKey := fmt.Sprintf("%v", rec.Key().ID)
@@ -382,8 +383,8 @@ func applyProjection(records []dal.Record, columns []dal.Column, collection stri
 			}
 			out[columnOutKey(col)] = v
 		}
-		key := dal.NewKeyWithID(collection, recKey)
-		result[i] = dal.NewRecordWithData(key, out).SetError(nil)
+		key := record.NewKeyWithID(collection, recKey)
+		result[i] = record.NewRecordWithData(key, out).SetError(nil)
 	}
 	return result, nil
 }
@@ -450,7 +451,7 @@ func collectionFromQuery(def *ingitdb.Definition, query dal.Query) (*ingitdb.Col
 	return colDef, nil
 }
 
-func readAllRecordsFromDisk(colDef *ingitdb.CollectionDef) ([]dal.Record, error) {
+func readAllRecordsFromDisk(colDef *ingitdb.CollectionDef) ([]record.Record, error) {
 	switch colDef.RecordFile.RecordType {
 	case ingitdb.SingleRecord:
 		return readAllSingleRecords(colDef)
@@ -462,8 +463,8 @@ func readAllRecordsFromDisk(colDef *ingitdb.CollectionDef) ([]dal.Record, error)
 }
 
 // readAllSingleRecords reads every single-record file and bakes computed
-// columns into each returned dal.Record.
-func readAllSingleRecords(colDef *ingitdb.CollectionDef) ([]dal.Record, error) {
+// columns into each returned record.Record.
+func readAllSingleRecords(colDef *ingitdb.CollectionDef) ([]record.Record, error) {
 	stored, err := readAllSingleStored(colDef)
 	if err != nil {
 		return nil, err
@@ -472,8 +473,8 @@ func readAllSingleRecords(colDef *ingitdb.CollectionDef) ([]dal.Record, error) {
 }
 
 // readAllMapOfRecords reads a map-of-records file and bakes computed columns
-// into each returned dal.Record.
-func readAllMapOfRecords(colDef *ingitdb.CollectionDef) ([]dal.Record, error) {
+// into each returned record.Record.
+func readAllMapOfRecords(colDef *ingitdb.CollectionDef) ([]record.Record, error) {
 	stored, err := readAllMapStored(colDef)
 	if err != nil {
 		return nil, err
@@ -489,15 +490,15 @@ func readAllMapOfRecords(colDef *ingitdb.CollectionDef) ([]dal.Record, error) {
 // retained for the write-time computed-foreign-key validation (Set/Delete),
 // which is explicitly out of scope for the lazy migration and must keep
 // evaluating computed FK columns to enforce referential integrity.
-func bakeStoredRecords(colDef *ingitdb.CollectionDef, stored []KeyedStored) ([]dal.Record, error) {
-	records := make([]dal.Record, 0, len(stored))
+func bakeStoredRecords(colDef *ingitdb.CollectionDef, stored []KeyedStored) ([]record.Record, error) {
+	records := make([]record.Record, 0, len(stored))
 	for _, s := range stored {
 		computed, computeErr := ApplyFormulasToRead(s.Stored, colDef.Columns, colDef.ID, s.Key)
 		if computeErr != nil {
 			return nil, computeErr
 		}
-		key := dal.NewKeyWithID(colDef.ID, s.Key)
-		rec := dal.NewRecordWithData(key, computed)
+		key := record.NewKeyWithID(colDef.ID, s.Key)
+		rec := record.NewRecordWithData(key, computed)
 		rec.SetError(nil)
 		records = append(records, rec)
 	}
@@ -597,7 +598,7 @@ func buildKeyExtractor(nameTemplate string) (func(relPath string) string, error)
 	}, nil
 }
 
-func applyWhere(records []dal.Record, cond dal.Condition) ([]dal.Record, error) {
+func applyWhere(records []record.Record, cond dal.Condition) ([]record.Record, error) {
 	filtered := records[:0]
 	for _, rec := range records {
 		data := rec.Data().(map[string]any)
@@ -613,7 +614,7 @@ func applyWhere(records []dal.Record, cond dal.Condition) ([]dal.Record, error) 
 	return filtered, nil
 }
 
-func applyOrderBy(records []dal.Record, orderBy []dal.OrderExpression) {
+func applyOrderBy(records []record.Record, orderBy []dal.OrderExpression) {
 	sort.SliceStable(records, func(i, j int) bool {
 		dataI := records[i].Data().(map[string]any)
 		dataJ := records[j].Data().(map[string]any)

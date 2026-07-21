@@ -10,6 +10,7 @@ import (
 
 	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/dalgo/dbschema"
+	"github.com/dal-go/record"
 )
 
 // writeCollectionDef creates <root>/<name>/.collection/definition.yaml
@@ -80,7 +81,7 @@ func TestListCollections_ParentArgumentIgnored(t *testing.T) {
 	reader := db.(dbschema.SchemaReader)
 
 	withNil, _ := reader.ListCollections(context.Background(), nil)
-	withKey, _ := reader.ListCollections(context.Background(), dal.NewKeyWithID("ignored", "x"))
+	withKey, _ := reader.ListCollections(context.Background(), record.NewKeyWithID("ignored", "x"))
 	if len(withNil) != len(withKey) {
 		t.Errorf("ListCollections should ignore parent: nil=%d, key=%d", len(withNil), len(withKey))
 	}
