@@ -10,6 +10,7 @@ import (
 	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/dalgo/recordset"
 
+	"github.com/dal-go/record"
 	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
@@ -206,8 +207,8 @@ func recordsetQueryTx(t *testing.T) (readonlyTx, dal.Query) {
 	}
 	def := &ingitdb.Definition{Collections: map[string]*ingitdb.CollectionDef{"people": colDef}}
 	query := dal.From(dal.NewRootCollectionRef("people", "")).NewQuery().
-		SelectIntoRecord(func() dal.Record {
-			return dal.NewRecordWithData(dal.NewKeyWithID("people", ""), map[string]any{})
+		SelectIntoRecord(func() record.Record {
+			return record.NewRecordWithData(record.NewKeyWithID("people", ""), map[string]any{})
 		})
 	return readonlyTx{def: def}, query
 }
@@ -362,8 +363,8 @@ func TestReadonlyTx_ExecuteQueryToRecordsetReader_MapOfRecords(t *testing.T) {
 	def := &ingitdb.Definition{Collections: map[string]*ingitdb.CollectionDef{"scores": colDef}}
 	tx := readonlyTx{def: def}
 	query := dal.From(dal.NewRootCollectionRef("scores", "")).NewQuery().
-		SelectIntoRecord(func() dal.Record {
-			return dal.NewRecordWithData(dal.NewKeyWithID("scores", ""), map[string]any{})
+		SelectIntoRecord(func() record.Record {
+			return record.NewRecordWithData(record.NewKeyWithID("scores", ""), map[string]any{})
 		})
 	reader, err := tx.ExecuteQueryToRecordsetReader(context.Background(), query)
 	if err != nil {

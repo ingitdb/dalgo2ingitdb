@@ -14,6 +14,7 @@ import (
 	"github.com/dal-go/dalgo/dbschema"
 	"gopkg.in/yaml.v3"
 
+	"github.com/dal-go/record"
 	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
@@ -39,7 +40,7 @@ var reservedSubDirs = map[string]bool{
 // is ignored (inGitDB has no catalog hierarchy). Results are sorted
 // alphabetically by name; names use "/" as the separator for nested
 // collection paths relative to projectPath.
-func (db *Database) ListCollections(_ context.Context, _ *dal.Key) ([]dal.CollectionRef, error) {
+func (db *Database) ListCollections(_ context.Context, _ *record.Key) ([]dal.CollectionRef, error) {
 	var refs []dal.CollectionRef
 	walkErr := filepath.WalkDir(db.projectPath, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {

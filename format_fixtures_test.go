@@ -8,6 +8,7 @@ import (
 
 	"github.com/dal-go/dalgo/dal"
 
+	"github.com/dal-go/record"
 	"github.com/ingitdb/dalgo2ingitdb"
 	"github.com/ingitdb/ingitdb-go/ingitdb/validator"
 )
@@ -34,8 +35,8 @@ func TestFormatFixtures_Read(t *testing.T) {
 		{"work", "Bob"},
 	}
 	for _, c := range cases {
-		key := dal.NewKeyWithParentAndID(dal.NewKeyWithID("spaces", c.space), "contacts", "c1")
-		rec := dal.NewRecordWithData(key, map[string]any{})
+		key := record.NewKeyWithParentAndID(record.NewKeyWithID("spaces", c.space), "contacts", "c1")
+		rec := record.NewRecordWithData(key, map[string]any{})
 		if err := db.Get(ctx, rec); err != nil {
 			t.Fatalf("Get spaces/%s/contacts/c1: %v", c.space, err)
 		}
@@ -56,12 +57,12 @@ func TestFormatFixtures_WriterMatches(t *testing.T) {
 	ctx := context.Background()
 
 	if err := db.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
-		fam := dal.NewKeyWithParentAndID(dal.NewKeyWithID("spaces", "family"), "contacts", "c1")
-		if err := tx.Set(ctx, dal.NewRecordWithData(fam, map[string]any{"name": "Alice"})); err != nil {
+		fam := record.NewKeyWithParentAndID(record.NewKeyWithID("spaces", "family"), "contacts", "c1")
+		if err := tx.Set(ctx, record.NewRecordWithData(fam, map[string]any{"name": "Alice"})); err != nil {
 			return err
 		}
-		work := dal.NewKeyWithParentAndID(dal.NewKeyWithID("spaces", "work"), "contacts", "c1")
-		return tx.Set(ctx, dal.NewRecordWithData(work, map[string]any{"name": "Bob"}))
+		work := record.NewKeyWithParentAndID(record.NewKeyWithID("spaces", "work"), "contacts", "c1")
+		return tx.Set(ctx, record.NewRecordWithData(work, map[string]any{"name": "Bob"}))
 	}); err != nil {
 		t.Fatalf("write records: %v", err)
 	}

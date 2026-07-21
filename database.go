@@ -10,6 +10,7 @@ import (
 	"github.com/dal-go/dalgo/ddl"
 	"github.com/dal-go/dalgo/recordset"
 
+	dalrecord "github.com/dal-go/record"
 	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
@@ -151,7 +152,7 @@ func (db *Database) RunReadwriteTransaction(ctx context.Context, f dal.RWTxWorke
 }
 
 // Get loads a single record. See readonlyTx.Get for semantics.
-func (db *Database) Get(ctx context.Context, record dal.Record) error {
+func (db *Database) Get(ctx context.Context, record dalrecord.Record) error {
 	def, err := db.loadDefinition()
 	if err != nil {
 		return err
@@ -160,7 +161,7 @@ func (db *Database) Get(ctx context.Context, record dal.Record) error {
 }
 
 // Exists reports whether the record identified by key exists on disk.
-func (db *Database) Exists(ctx context.Context, key *dal.Key) (bool, error) {
+func (db *Database) Exists(ctx context.Context, key *dalrecord.Key) (bool, error) {
 	def, err := db.loadDefinition()
 	if err != nil {
 		return false, err
@@ -169,7 +170,7 @@ func (db *Database) Exists(ctx context.Context, key *dal.Key) (bool, error) {
 }
 
 // GetMulti loads multiple records.
-func (db *Database) GetMulti(ctx context.Context, records []dal.Record) error {
+func (db *Database) GetMulti(ctx context.Context, records []dalrecord.Record) error {
 	def, err := db.loadDefinition()
 	if err != nil {
 		return err

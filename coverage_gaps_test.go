@@ -19,10 +19,11 @@ import (
 	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/dalgo/dbschema"
 	"github.com/dal-go/dalgo/ddl"
-	"github.com/dal-go/dalgo/update"
+	"github.com/dal-go/record/update"
 	"github.com/ingr-io/ingr-go/ingr"
 	"gopkg.in/yaml.v3"
 
+	"github.com/dal-go/record"
 	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
@@ -119,7 +120,7 @@ func TestDatabase_RunReadwriteTransaction_LoadError(t *testing.T) {
 func TestDatabase_Get_LoadError(t *testing.T) {
 	t.Parallel()
 	db := &Database{projectPath: t.TempDir(), reader: nil}
-	err := db.Get(context.Background(), dal.NewRecordWithData(dal.NewKeyWithID("c", "k"), map[string]any{}))
+	err := db.Get(context.Background(), record.NewRecordWithData(record.NewKeyWithID("c", "k"), map[string]any{}))
 	if err == nil {
 		t.Fatal("want error")
 	}
@@ -128,7 +129,7 @@ func TestDatabase_Get_LoadError(t *testing.T) {
 func TestDatabase_Exists_LoadError(t *testing.T) {
 	t.Parallel()
 	db := &Database{projectPath: t.TempDir(), reader: nil}
-	_, err := db.Exists(context.Background(), dal.NewKeyWithID("c", "k"))
+	_, err := db.Exists(context.Background(), record.NewKeyWithID("c", "k"))
 	if err == nil {
 		t.Fatal("want error")
 	}
@@ -137,8 +138,8 @@ func TestDatabase_Exists_LoadError(t *testing.T) {
 func TestDatabase_GetMulti_LoadError(t *testing.T) {
 	t.Parallel()
 	db := &Database{projectPath: t.TempDir(), reader: nil}
-	err := db.GetMulti(context.Background(), []dal.Record{
-		dal.NewRecordWithData(dal.NewKeyWithID("c", "k"), map[string]any{}),
+	err := db.GetMulti(context.Background(), []record.Record{
+		record.NewRecordWithData(record.NewKeyWithID("c", "k"), map[string]any{}),
 	})
 	if err == nil {
 		t.Fatal("want error")
@@ -149,8 +150,8 @@ func TestDatabase_ExecuteQueryToRecordsReader_LoadError(t *testing.T) {
 	t.Parallel()
 	db := &Database{projectPath: t.TempDir(), reader: nil}
 	q := dal.From(dal.NewRootCollectionRef("c", "")).NewQuery().
-		SelectIntoRecord(func() dal.Record {
-			return dal.NewRecordWithData(dal.NewKeyWithID("c", ""), map[string]any{})
+		SelectIntoRecord(func() record.Record {
+			return record.NewRecordWithData(record.NewKeyWithID("c", ""), map[string]any{})
 		})
 	_, err := db.ExecuteQueryToRecordsReader(context.Background(), q)
 	if err == nil {
@@ -201,7 +202,7 @@ func (r readonlyTx) resolveNilKey() error {
 func TestReadonlyTx_Get_NilDefinition(t *testing.T) {
 	t.Parallel()
 	tx := readonlyTx{def: nil}
-	err := tx.Get(context.Background(), dal.NewRecordWithData(dal.NewKeyWithID("c", "k"), map[string]any{}))
+	err := tx.Get(context.Background(), record.NewRecordWithData(record.NewKeyWithID("c", "k"), map[string]any{}))
 	if err == nil {
 		t.Fatal("want error when def is nil")
 	}
@@ -212,7 +213,7 @@ func TestReadonlyTx_Get_CollectionNotFound(t *testing.T) {
 	tx := readonlyTx{
 		def: &ingitdb.Definition{Collections: map[string]*ingitdb.CollectionDef{}},
 	}
-	err := tx.Get(context.Background(), dal.NewRecordWithData(dal.NewKeyWithID("missing", "k"), map[string]any{}))
+	err := tx.Get(context.Background(), record.NewRecordWithData(record.NewKeyWithID("missing", "k"), map[string]any{}))
 	if err == nil {
 		t.Fatal("want error for missing collection")
 	}
@@ -225,7 +226,7 @@ func TestReadonlyTx_Get_NoRecordFile(t *testing.T) {
 			"c": {ID: "c", RecordFile: nil},
 		}},
 	}
-	err := tx.Get(context.Background(), dal.NewRecordWithData(dal.NewKeyWithID("c", "k"), map[string]any{}))
+	err := tx.Get(context.Background(), record.NewRecordWithData(record.NewKeyWithID("c", "k"), map[string]any{}))
 	if err == nil {
 		t.Fatal("want error for missing RecordFile")
 	}
@@ -248,7 +249,7 @@ func TestReadonlyTx_Get_UnknownRecordType(t *testing.T) {
 			},
 		}},
 	}
-	err := tx.Get(context.Background(), dal.NewRecordWithData(dal.NewKeyWithID("c", "k"), map[string]any{}))
+	err := tx.Get(context.Background(), record.NewRecordWithData(record.NewKeyWithID("c", "k"), map[string]any{}))
 	if err == nil {
 		t.Fatal("want error for unknown record type")
 	}
@@ -271,7 +272,7 @@ func TestReadonlyTx_Exists_UnknownRecordType(t *testing.T) {
 			},
 		}},
 	}
-	_, err := tx.Exists(context.Background(), dal.NewKeyWithID("c", "k"))
+	_, err := tx.Exists(context.Background(), record.NewKeyWithID("c", "k"))
 	if err == nil {
 		t.Fatal("want error for unknown record type")
 	}
@@ -302,9 +303,9 @@ func TestReadonlyTx_Get_MapOfRecords_NotFound(t *testing.T) {
 	root := t.TempDir()
 	tx, _ := makeMapOfRecordsTx(t, root)
 	// No file on disk → Get returns ErrRecordNotFound and marks not-found.
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("scores", "alice"), map[string]any{})
-	if err := tx.Get(context.Background(), rec); !dal.IsNotFound(err) {
-		t.Fatalf("Get: got %v, want dal.ErrRecordNotFound", err)
+	rec := record.NewRecordWithData(record.NewKeyWithID("scores", "alice"), map[string]any{})
+	if err := tx.Get(context.Background(), rec); !record.IsNotFound(err) {
+		t.Fatalf("Get: got %v, want record.ErrRecordNotFound", err)
 	}
 	if rec.Exists() {
 		t.Error("rec.Exists: want false for missing map-of-records entry")
@@ -323,9 +324,9 @@ func TestReadonlyTx_Get_MapOfRecords_KeyMissing(t *testing.T) {
 	if err := os.WriteFile(p, []byte("bob:\n  score: 42\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("scores", "alice"), map[string]any{})
-	if err := tx.Get(context.Background(), rec); !dal.IsNotFound(err) {
-		t.Fatalf("Get: got %v, want dal.ErrRecordNotFound", err)
+	rec := record.NewRecordWithData(record.NewKeyWithID("scores", "alice"), map[string]any{})
+	if err := tx.Get(context.Background(), rec); !record.IsNotFound(err) {
+		t.Fatalf("Get: got %v, want record.ErrRecordNotFound", err)
 	}
 	if rec.Exists() {
 		t.Error("rec.Exists: want false for absent key in map-of-records file")
@@ -343,7 +344,7 @@ func TestReadonlyTx_Get_MapOfRecords_Found(t *testing.T) {
 	if err := os.WriteFile(p, []byte("alice:\n  score: 99\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("scores", "alice"), map[string]any{})
+	rec := record.NewRecordWithData(record.NewKeyWithID("scores", "alice"), map[string]any{})
 	if err := tx.Get(context.Background(), rec); err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -356,7 +357,7 @@ func TestReadonlyTx_Exists_MapOfRecords_FileMissing(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	tx, _ := makeMapOfRecordsTx(t, root)
-	exists, err := tx.Exists(context.Background(), dal.NewKeyWithID("scores", "alice"))
+	exists, err := tx.Exists(context.Background(), record.NewKeyWithID("scores", "alice"))
 	if err != nil {
 		t.Fatalf("Exists: %v", err)
 	}
@@ -376,7 +377,7 @@ func TestReadonlyTx_Exists_MapOfRecords_KeyPresent(t *testing.T) {
 	if err := os.WriteFile(p, []byte("alice:\n  score: 7\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	exists, err := tx.Exists(context.Background(), dal.NewKeyWithID("scores", "alice"))
+	exists, err := tx.Exists(context.Background(), record.NewKeyWithID("scores", "alice"))
 	if err != nil {
 		t.Fatalf("Exists: %v", err)
 	}
@@ -396,7 +397,7 @@ func TestReadonlyTx_Exists_MapOfRecords_KeyAbsent(t *testing.T) {
 	if err := os.WriteFile(p, []byte("bob:\n  score: 1\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	exists, err := tx.Exists(context.Background(), dal.NewKeyWithID("scores", "alice"))
+	exists, err := tx.Exists(context.Background(), record.NewKeyWithID("scores", "alice"))
 	if err != nil {
 		t.Fatalf("Exists: %v", err)
 	}
@@ -454,9 +455,9 @@ func TestReadwriteTx_SetMulti(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "items", "$records"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	r1 := dal.NewRecordWithData(dal.NewKeyWithID("items", "a"), map[string]any{"name": "A"})
-	r2 := dal.NewRecordWithData(dal.NewKeyWithID("items", "b"), map[string]any{"name": "B"})
-	if err := tx.SetMulti(context.Background(), []dal.Record{r1, r2}); err != nil {
+	r1 := record.NewRecordWithData(record.NewKeyWithID("items", "a"), map[string]any{"name": "A"})
+	r2 := record.NewRecordWithData(record.NewKeyWithID("items", "b"), map[string]any{"name": "B"})
+	if err := tx.SetMulti(context.Background(), []record.Record{r1, r2}); err != nil {
 		t.Fatalf("SetMulti: %v", err)
 	}
 	p := filepath.Join(root, "items", "$records", "a.yaml")
@@ -471,9 +472,9 @@ func TestReadwriteTx_InsertMulti(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "items", "$records"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	r1 := dal.NewRecordWithData(dal.NewKeyWithID("items", "x"), map[string]any{"name": "X"})
-	r2 := dal.NewRecordWithData(dal.NewKeyWithID("items", "y"), map[string]any{"name": "Y"})
-	if err := tx.InsertMulti(context.Background(), []dal.Record{r1, r2}); err != nil {
+	r1 := record.NewRecordWithData(record.NewKeyWithID("items", "x"), map[string]any{"name": "X"})
+	r2 := record.NewRecordWithData(record.NewKeyWithID("items", "y"), map[string]any{"name": "Y"})
+	if err := tx.InsertMulti(context.Background(), []record.Record{r1, r2}); err != nil {
 		t.Fatalf("InsertMulti: %v", err)
 	}
 	for _, key := range []string{"x", "y"} {
@@ -498,7 +499,7 @@ func TestReadwriteTx_DeleteMulti(t *testing.T) {
 			t.Fatalf("seed %s: %v", key, err)
 		}
 	}
-	keys := []*dal.Key{dal.NewKeyWithID("items", "m"), dal.NewKeyWithID("items", "n")}
+	keys := []*record.Key{record.NewKeyWithID("items", "m"), record.NewKeyWithID("items", "n")}
 	if err := tx.DeleteMulti(context.Background(), keys); err != nil {
 		t.Fatalf("DeleteMulti: %v", err)
 	}
@@ -521,7 +522,7 @@ func TestReadwriteTx_UpdateRecord(t *testing.T) {
 	if err := os.WriteFile(p, []byte("name: old\n"), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("items", "z"), map[string]any{"name": "old"})
+	rec := record.NewRecordWithData(record.NewKeyWithID("items", "z"), map[string]any{"name": "old"})
 	// SetError(nil) must be called before UpdateRecord can call rec.Data().
 	rec.SetError(nil)
 	ups := []update.Update{update.ByFieldName("name", "new")}
@@ -544,7 +545,7 @@ func TestReadwriteTx_UpdateRecord(t *testing.T) {
 func TestReadwriteTx_UpdateRecord_PreconditionsRejected(t *testing.T) {
 	t.Parallel()
 	tx, _ := makeReadwriteTx(t)
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("items", "z"), map[string]any{})
+	rec := record.NewRecordWithData(record.NewKeyWithID("items", "z"), map[string]any{})
 	err := tx.UpdateRecord(context.Background(), rec, nil, dal.WithExistsPrecondition())
 	if err == nil {
 		t.Fatal("want error for preconditions in UpdateRecord")
@@ -564,7 +565,7 @@ func TestReadwriteTx_UpdateMulti(t *testing.T) {
 			t.Fatalf("seed %s: %v", key, err)
 		}
 	}
-	keys := []*dal.Key{dal.NewKeyWithID("items", "p"), dal.NewKeyWithID("items", "q")}
+	keys := []*record.Key{record.NewKeyWithID("items", "p"), record.NewKeyWithID("items", "q")}
 	ups := []update.Update{update.ByFieldName("name", "updated")}
 	if err := tx.UpdateMulti(context.Background(), keys, ups); err != nil {
 		t.Fatalf("UpdateMulti: %v", err)
@@ -641,7 +642,7 @@ func TestReadwriteTx_Set_MapOfRecords(t *testing.T) {
 	if err := os.MkdirAll(colDef.DirPath, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("scores", "alice"), map[string]any{"score": 100})
+	rec := record.NewRecordWithData(record.NewKeyWithID("scores", "alice"), map[string]any{"score": 100})
 	if err := tx.Set(context.Background(), rec); err != nil {
 		t.Fatalf("Set MapOfRecords: %v", err)
 	}
@@ -666,12 +667,12 @@ func TestReadwriteTx_Insert_MapOfRecords(t *testing.T) {
 	if err := os.MkdirAll(colDef.DirPath, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("scores", "bob"), map[string]any{"score": 55})
+	rec := record.NewRecordWithData(record.NewKeyWithID("scores", "bob"), map[string]any{"score": 55})
 	if err := tx.Insert(context.Background(), rec); err != nil {
 		t.Fatalf("Insert MapOfRecords: %v", err)
 	}
 	// Duplicate insert must fail.
-	rec2 := dal.NewRecordWithData(dal.NewKeyWithID("scores", "bob"), map[string]any{"score": 66})
+	rec2 := record.NewRecordWithData(record.NewKeyWithID("scores", "bob"), map[string]any{"score": 66})
 	if err := tx.Insert(context.Background(), rec2); err == nil {
 		t.Fatal("duplicate Insert MapOfRecords: want error")
 	}
@@ -688,11 +689,11 @@ func TestReadwriteTx_Delete_MapOfRecords(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	// Delete present key.
-	if err := tx.Delete(context.Background(), dal.NewKeyWithID("scores", "eve")); err != nil {
+	if err := tx.Delete(context.Background(), record.NewKeyWithID("scores", "eve")); err != nil {
 		t.Fatalf("Delete present key: %v", err)
 	}
 	// Delete absent key — file still exists but key gone: idempotent no-op.
-	if err := tx.Delete(context.Background(), dal.NewKeyWithID("scores", "eve")); err != nil {
+	if err := tx.Delete(context.Background(), record.NewKeyWithID("scores", "eve")); err != nil {
 		t.Fatalf("delete absent key: want nil (idempotent), got %v", err)
 	}
 }
@@ -704,7 +705,7 @@ func TestReadwriteTx_Delete_MapOfRecords_FileMissing(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	// No file → idempotent no-op (nil).
-	err := tx.Delete(context.Background(), dal.NewKeyWithID("scores", "ghost"))
+	err := tx.Delete(context.Background(), record.NewKeyWithID("scores", "ghost"))
 	if err != nil {
 		t.Fatalf("want nil (idempotent) when file missing, got %v", err)
 	}
@@ -727,7 +728,7 @@ func TestReadwriteTx_Set_UnknownRecordType(t *testing.T) {
 			},
 		}},
 	}}
-	err := tx.Set(context.Background(), dal.NewRecordWithData(dal.NewKeyWithID("c", "k"), map[string]any{}))
+	err := tx.Set(context.Background(), record.NewRecordWithData(record.NewKeyWithID("c", "k"), map[string]any{}))
 	if err == nil {
 		t.Fatal("want error for unknown record type in Set")
 	}
@@ -750,7 +751,7 @@ func TestReadwriteTx_Insert_UnknownRecordType(t *testing.T) {
 			},
 		}},
 	}}
-	err := tx.Insert(context.Background(), dal.NewRecordWithData(dal.NewKeyWithID("c", "k"), map[string]any{}))
+	err := tx.Insert(context.Background(), record.NewRecordWithData(record.NewKeyWithID("c", "k"), map[string]any{}))
 	if err == nil {
 		t.Fatal("want error for unknown record type in Insert")
 	}
@@ -773,7 +774,7 @@ func TestReadwriteTx_Delete_UnknownRecordType(t *testing.T) {
 			},
 		}},
 	}}
-	err := tx.Delete(context.Background(), dal.NewKeyWithID("c", "k"))
+	err := tx.Delete(context.Background(), record.NewKeyWithID("c", "k"))
 	if err == nil {
 		t.Fatal("want error for unknown record type in Delete")
 	}
@@ -782,7 +783,7 @@ func TestReadwriteTx_Delete_UnknownRecordType(t *testing.T) {
 func TestReadwriteTx_Update_WithPreconditions(t *testing.T) {
 	t.Parallel()
 	tx, _ := makeReadwriteTx(t)
-	err := tx.Update(context.Background(), dal.NewKeyWithID("items", "k"), nil, dal.WithExistsPrecondition())
+	err := tx.Update(context.Background(), record.NewKeyWithID("items", "k"), nil, dal.WithExistsPrecondition())
 	if err == nil {
 		t.Fatal("want error: preconditions not supported")
 	}
@@ -1045,8 +1046,8 @@ func TestExecuteQueryToRecordsReader_NilDefinition(t *testing.T) {
 	t.Parallel()
 	tx := readonlyTx{def: nil}
 	q := dal.From(dal.NewRootCollectionRef("items", "")).NewQuery().
-		SelectIntoRecord(func() dal.Record {
-			return dal.NewRecordWithData(dal.NewKeyWithID("items", ""), map[string]any{})
+		SelectIntoRecord(func() record.Record {
+			return record.NewRecordWithData(record.NewKeyWithID("items", ""), map[string]any{})
 		})
 	_, err := executeQueryToRecordsReader(context.Background(), tx, q)
 	if err == nil {
@@ -1060,8 +1061,8 @@ func TestExecuteQueryToRecordsReader_CollectionNotFound(t *testing.T) {
 		def: &ingitdb.Definition{Collections: map[string]*ingitdb.CollectionDef{}},
 	}
 	q := dal.From(dal.NewRootCollectionRef("noexist", "")).NewQuery().
-		SelectIntoRecord(func() dal.Record {
-			return dal.NewRecordWithData(dal.NewKeyWithID("noexist", ""), map[string]any{})
+		SelectIntoRecord(func() record.Record {
+			return record.NewRecordWithData(record.NewKeyWithID("noexist", ""), map[string]any{})
 		})
 	reader, err := executeQueryToRecordsReader(context.Background(), tx, q)
 	if err != nil {
@@ -1080,8 +1081,8 @@ func TestExecuteQueryToRecordsReader_CollectionNoRecordFile(t *testing.T) {
 		}},
 	}
 	q := dal.From(dal.NewRootCollectionRef("items", "")).NewQuery().
-		SelectIntoRecord(func() dal.Record {
-			return dal.NewRecordWithData(dal.NewKeyWithID("items", ""), map[string]any{})
+		SelectIntoRecord(func() record.Record {
+			return record.NewRecordWithData(record.NewKeyWithID("items", ""), map[string]any{})
 		})
 	_, err := executeQueryToRecordsReader(context.Background(), tx, q)
 	if err == nil {
@@ -1125,8 +1126,8 @@ func TestExecuteQueryToRecordsReader_WithLimit(t *testing.T) {
 	}
 	q := dal.From(dal.NewRootCollectionRef("items", "")).NewQuery().
 		Limit(2).
-		SelectIntoRecord(func() dal.Record {
-			return dal.NewRecordWithData(dal.NewKeyWithID("items", ""), map[string]any{})
+		SelectIntoRecord(func() record.Record {
+			return record.NewRecordWithData(record.NewKeyWithID("items", ""), map[string]any{})
 		})
 	reader, err := executeQueryToRecordsReader(context.Background(), tx, q)
 	if err != nil {
@@ -1151,13 +1152,13 @@ func TestExecuteQueryToRecordsReader_WithLimit(t *testing.T) {
 
 func TestApplyOrderBy_DescendingByVal(t *testing.T) {
 	t.Parallel()
-	makeRec := func(id string, val int) dal.Record {
-		key := dal.NewKeyWithID("c", id)
-		rec := dal.NewRecordWithData(key, map[string]any{"val": val})
+	makeRec := func(id string, val int) record.Record {
+		key := record.NewKeyWithID("c", id)
+		rec := record.NewRecordWithData(key, map[string]any{"val": val})
 		rec.SetError(nil)
 		return rec
 	}
-	recs := []dal.Record{makeRec("a", 1), makeRec("b", 3), makeRec("c", 2)}
+	recs := []record.Record{makeRec("a", 1), makeRec("b", 3), makeRec("c", 2)}
 	// Build an order expression: descending by val.
 	orderExprs := []dal.OrderExpression{dal.DescendingField("val")}
 	applyOrderBy(recs, orderExprs)
@@ -1172,13 +1173,13 @@ func TestApplyOrderBy_DescendingByVal(t *testing.T) {
 
 func TestApplyOrderBy_ByID(t *testing.T) {
 	t.Parallel()
-	makeRec := func(id string) dal.Record {
-		key := dal.NewKeyWithID("c", id)
-		rec := dal.NewRecordWithData(key, map[string]any{})
+	makeRec := func(id string) record.Record {
+		key := record.NewKeyWithID("c", id)
+		rec := record.NewRecordWithData(key, map[string]any{})
 		rec.SetError(nil)
 		return rec
 	}
-	recs := []dal.Record{makeRec("c"), makeRec("a"), makeRec("b")}
+	recs := []record.Record{makeRec("c"), makeRec("a"), makeRec("b")}
 	// Order ascending by $id field.
 	orderExprs := []dal.OrderExpression{dal.AscendingField("$id")}
 	applyOrderBy(recs, orderExprs)
@@ -1246,8 +1247,8 @@ func TestEvaluateGroupCondition_ViaQuery(t *testing.T) {
 	q := dal.From(dal.NewRootCollectionRef("things", "")).NewQuery().
 		WhereField("val", dal.GreaterThen, 3).
 		WhereField("val", dal.LessThen, 20).
-		SelectIntoRecord(func() dal.Record {
-			return dal.NewRecordWithData(dal.NewKeyWithID("things", ""), map[string]any{})
+		SelectIntoRecord(func() record.Record {
+			return record.NewRecordWithData(record.NewKeyWithID("things", ""), map[string]any{})
 		})
 	reader, err := executeQueryToRecordsReader(context.Background(), tx, q)
 	if err != nil {
@@ -1490,9 +1491,9 @@ func TestSliceRecordsReader_Cursor(t *testing.T) {
 
 func TestSliceRecordsReader_NextAndClose(t *testing.T) {
 	t.Parallel()
-	key := dal.NewKeyWithID("c", "1")
-	rec := dal.NewRecordWithData(key, map[string]any{})
-	r := newSliceRecordsReader([]dal.Record{rec})
+	key := record.NewKeyWithID("c", "1")
+	rec := record.NewRecordWithData(key, map[string]any{})
+	r := newSliceRecordsReader([]record.Record{rec})
 
 	got, err := r.Next()
 	if err != nil {
@@ -2264,8 +2265,8 @@ func TestExecuteQuery_NilFrom(t *testing.T) {
 	tx := readonlyTx{
 		def: &ingitdb.Definition{Collections: map[string]*ingitdb.CollectionDef{}},
 	}
-	q := dal.NewQueryBuilder(nil).SelectIntoRecord(func() dal.Record {
-		return dal.NewRecordWithData(dal.NewKeyWithID("x", "k"), map[string]any{})
+	q := dal.NewQueryBuilder(nil).SelectIntoRecord(func() record.Record {
+		return record.NewRecordWithData(record.NewKeyWithID("x", "k"), map[string]any{})
 	})
 	_, err := executeQueryToRecordsReader(context.Background(), tx, q)
 	if err == nil {
@@ -2282,8 +2283,8 @@ func TestExecuteQuery_NonCollectionRef(t *testing.T) {
 		def: &ingitdb.Definition{Collections: map[string]*ingitdb.CollectionDef{}},
 	}
 	q := dal.From(dal.NewCollectionGroupRef("grp", "")).NewQuery().
-		SelectIntoRecord(func() dal.Record {
-			return dal.NewRecordWithData(dal.NewKeyWithID("grp", "k"), map[string]any{})
+		SelectIntoRecord(func() record.Record {
+			return record.NewRecordWithData(record.NewKeyWithID("grp", "k"), map[string]any{})
 		})
 	_, err := executeQueryToRecordsReader(context.Background(), tx, q)
 	if err == nil {
@@ -2331,8 +2332,8 @@ func TestApplyOrderBy_NonFieldRefExpr(t *testing.T) {
 	// equal → cmp==0 continue → fall through to return false at end of loop).
 	q := dal.From(dal.NewRootCollectionRef("things", "")).NewQuery().
 		OrderBy(dal.Ascending(dal.Constant{Value: "literal"}), dal.AscendingField("val")).
-		SelectIntoRecord(func() dal.Record {
-			return dal.NewRecordWithData(dal.NewKeyWithID("things", ""), map[string]any{})
+		SelectIntoRecord(func() record.Record {
+			return record.NewRecordWithData(record.NewKeyWithID("things", ""), map[string]any{})
 		})
 	reader, err := executeQueryToRecordsReader(context.Background(), tx, q)
 	if err != nil {
@@ -2372,7 +2373,7 @@ func makeUnknownCollectionTx() readwriteTx {
 func TestSet_UnknownCollection(t *testing.T) {
 	t.Parallel()
 	tx := makeUnknownCollectionTx()
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("no_such_col", "k"), map[string]any{})
+	rec := record.NewRecordWithData(record.NewKeyWithID("no_such_col", "k"), map[string]any{})
 	err := tx.Set(context.Background(), rec)
 	if err == nil {
 		t.Fatal("Set: want error for unknown collection")
@@ -2382,9 +2383,9 @@ func TestSet_UnknownCollection(t *testing.T) {
 func TestSetMulti_PropagatesSetError(t *testing.T) {
 	t.Parallel()
 	tx := makeUnknownCollectionTx()
-	r1 := dal.NewRecordWithData(dal.NewKeyWithID("no_such_col", "a"), map[string]any{})
-	r2 := dal.NewRecordWithData(dal.NewKeyWithID("no_such_col", "b"), map[string]any{})
-	err := tx.SetMulti(context.Background(), []dal.Record{r1, r2})
+	r1 := record.NewRecordWithData(record.NewKeyWithID("no_such_col", "a"), map[string]any{})
+	r2 := record.NewRecordWithData(record.NewKeyWithID("no_such_col", "b"), map[string]any{})
+	err := tx.SetMulti(context.Background(), []record.Record{r1, r2})
 	if err == nil {
 		t.Fatal("SetMulti: want error propagated from Set")
 	}
@@ -2393,7 +2394,7 @@ func TestSetMulti_PropagatesSetError(t *testing.T) {
 func TestInsert_UnknownCollection(t *testing.T) {
 	t.Parallel()
 	tx := makeUnknownCollectionTx()
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("no_such_col", "k"), map[string]any{})
+	rec := record.NewRecordWithData(record.NewKeyWithID("no_such_col", "k"), map[string]any{})
 	err := tx.Insert(context.Background(), rec)
 	if err == nil {
 		t.Fatal("Insert: want error for unknown collection")
@@ -2403,8 +2404,8 @@ func TestInsert_UnknownCollection(t *testing.T) {
 func TestInsertMulti_PropagatesInsertError(t *testing.T) {
 	t.Parallel()
 	tx := makeUnknownCollectionTx()
-	r1 := dal.NewRecordWithData(dal.NewKeyWithID("no_such_col", "x"), map[string]any{})
-	err := tx.InsertMulti(context.Background(), []dal.Record{r1})
+	r1 := record.NewRecordWithData(record.NewKeyWithID("no_such_col", "x"), map[string]any{})
+	err := tx.InsertMulti(context.Background(), []record.Record{r1})
 	if err == nil {
 		t.Fatal("InsertMulti: want error propagated from Insert")
 	}
@@ -2413,7 +2414,7 @@ func TestInsertMulti_PropagatesInsertError(t *testing.T) {
 func TestDelete_UnknownCollection(t *testing.T) {
 	t.Parallel()
 	tx := makeUnknownCollectionTx()
-	err := tx.Delete(context.Background(), dal.NewKeyWithID("no_such_col", "k"))
+	err := tx.Delete(context.Background(), record.NewKeyWithID("no_such_col", "k"))
 	if err != nil {
 		t.Fatalf("Delete: unknown collection must be an idempotent no-op (a record there cannot exist), got: %v", err)
 	}
@@ -2422,7 +2423,7 @@ func TestDelete_UnknownCollection(t *testing.T) {
 func TestDeleteMulti_UnknownCollectionNoOp(t *testing.T) {
 	t.Parallel()
 	tx := makeUnknownCollectionTx()
-	err := tx.DeleteMulti(context.Background(), []*dal.Key{dal.NewKeyWithID("no_such_col", "k")})
+	err := tx.DeleteMulti(context.Background(), []*record.Key{record.NewKeyWithID("no_such_col", "k")})
 	if err != nil {
 		t.Fatalf("DeleteMulti: unknown collection must be an idempotent no-op, got: %v", err)
 	}
@@ -2433,7 +2434,7 @@ func TestDeleteMulti_UnknownCollectionNoOp(t *testing.T) {
 func TestUpdate_GetError(t *testing.T) {
 	t.Parallel()
 	tx := makeUnknownCollectionTx()
-	err := tx.Update(context.Background(), dal.NewKeyWithID("no_such_col", "k"),
+	err := tx.Update(context.Background(), record.NewKeyWithID("no_such_col", "k"),
 		[]update.Update{update.ByFieldName("x", 1)})
 	if err == nil {
 		t.Fatal("Update: want error from Get for unknown collection")
@@ -2452,12 +2453,12 @@ func TestUpdate_RecordNotFound(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "items", "$records"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	// Update on a non-existent record must fail with dal.ErrRecordNotFound
+	// Update on a non-existent record must fail with record.ErrRecordNotFound
 	// (Get returns it), not silently upsert a new record.
-	err := tx.Update(context.Background(), dal.NewKeyWithID("items", "nonexistent"),
+	err := tx.Update(context.Background(), record.NewKeyWithID("items", "nonexistent"),
 		[]update.Update{update.ByFieldName("name", "new")})
-	if !dal.IsNotFound(err) {
-		t.Fatalf("Update on missing record: got %v, want dal.ErrRecordNotFound", err)
+	if !record.IsNotFound(err) {
+		t.Fatalf("Update on missing record: got %v, want record.ErrRecordNotFound", err)
 	}
 	// And it must not have created the file.
 	if _, statErr := os.Stat(filepath.Join(root, "items", "$records", "nonexistent.yaml")); statErr == nil {
@@ -2479,7 +2480,7 @@ func TestUpdate_ApplyUpdatesError(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "z.yaml"), []byte("name: old\n"), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	err := tx.Update(context.Background(), dal.NewKeyWithID("items", "z"),
+	err := tx.Update(context.Background(), record.NewKeyWithID("items", "z"),
 		[]update.Update{update.ByFieldPath(update.FieldPath{"name", "sub"}, "val")})
 	if err == nil {
 		t.Fatal("Update: want error when intermediate is not a map")
@@ -2490,7 +2491,7 @@ func TestUpdateMulti_PropagatesUpdateError(t *testing.T) {
 	t.Parallel()
 	tx := makeUnknownCollectionTx()
 	err := tx.UpdateMulti(context.Background(),
-		[]*dal.Key{dal.NewKeyWithID("no_such_col", "k")},
+		[]*record.Key{record.NewKeyWithID("no_such_col", "k")},
 		[]update.Update{update.ByFieldName("x", 1)})
 	if err == nil {
 		t.Fatal("UpdateMulti: want error propagated from Update")
@@ -2507,7 +2508,7 @@ func TestExists_UnknownCollection(t *testing.T) {
 		db:  &Database{},
 		def: &ingitdb.Definition{Collections: map[string]*ingitdb.CollectionDef{}},
 	}
-	_, err := tx.Exists(context.Background(), dal.NewKeyWithID("no_such_col", "k"))
+	_, err := tx.Exists(context.Background(), record.NewKeyWithID("no_such_col", "k"))
 	if err == nil {
 		t.Fatal("Exists: want error for unknown collection")
 	}
@@ -2523,12 +2524,12 @@ func TestGetMulti_PropagatesGetError(t *testing.T) {
 			"c": {ID: "c", RecordFile: &ingitdb.RecordFileDef{RecordType: "bogus-record-type"}},
 		}},
 	}
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("c", "k"), map[string]any{})
-	err := tx.GetMulti(context.Background(), []dal.Record{rec})
+	rec := record.NewRecordWithData(record.NewKeyWithID("c", "k"), map[string]any{})
+	err := tx.GetMulti(context.Background(), []record.Record{rec})
 	if err == nil {
 		t.Fatal("GetMulti: want genuine (non-not-found) error propagated from Get")
 	}
-	if dal.IsNotFound(err) {
+	if record.IsNotFound(err) {
 		t.Errorf("GetMulti: not-found must not abort the batch, got %v", err)
 	}
 }

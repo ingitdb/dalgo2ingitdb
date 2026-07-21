@@ -9,8 +9,9 @@ import (
 	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/dalgo/dbschema"
 	"github.com/dal-go/dalgo/ddl"
-	"github.com/dal-go/dalgo/update"
+	"github.com/dal-go/record/update"
 
+	dalrecord "github.com/dal-go/record"
 	"github.com/ingitdb/dalgo2ingitdb"
 	"github.com/ingitdb/ingitdb-go/ingitdb/validator"
 )
@@ -287,7 +288,7 @@ func deleteComputedForeignKeyRecord(t *testing.T, db dal.DB, collection, key str
 	t.Helper()
 	ctx := context.Background()
 	return db.RunReadwriteTransaction(ctx, func(_ context.Context, tx dal.ReadwriteTransaction) error {
-		recordKey := dal.NewKeyWithID(collection, key)
+		recordKey := dalrecord.NewKeyWithID(collection, key)
 		return tx.Delete(ctx, recordKey)
 	})
 }
@@ -296,7 +297,7 @@ func updateComputedForeignKeyRecord(t *testing.T, db dal.DB, collection, key str
 	t.Helper()
 	ctx := context.Background()
 	return db.RunReadwriteTransaction(ctx, func(_ context.Context, tx dal.ReadwriteTransaction) error {
-		recordKey := dal.NewKeyWithID(collection, key)
+		recordKey := dalrecord.NewKeyWithID(collection, key)
 		return tx.Update(ctx, recordKey, updates)
 	})
 }
@@ -305,8 +306,8 @@ func updateRecordComputedForeignKey(t *testing.T, db dal.DB, collection, key str
 	t.Helper()
 	ctx := context.Background()
 	return db.RunReadwriteTransaction(ctx, func(_ context.Context, tx dal.ReadwriteTransaction) error {
-		recordKey := dal.NewKeyWithID(collection, key)
-		record := dal.NewRecordWithData(recordKey, current)
+		recordKey := dalrecord.NewKeyWithID(collection, key)
+		record := dalrecord.NewRecordWithData(recordKey, current)
 		// SetError(nil) marks the record loaded so UpdateRecord can read its Data.
 		record.SetError(nil)
 		return tx.UpdateRecord(ctx, record, updates)

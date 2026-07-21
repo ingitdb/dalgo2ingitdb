@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/dal-go/dalgo/dal"
+	"github.com/dal-go/record"
 )
 
 // gitInit initialises a git repo at dir with a usable identity so commits work
@@ -34,9 +35,9 @@ func git(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func franceRecord() dal.Record {
-	return dal.NewRecordWithData(
-		dal.NewKeyWithID("countries", "france"),
+func franceRecord() record.Record {
+	return record.NewRecordWithData(
+		record.NewKeyWithID("countries", "france"),
 		map[string]any{"name": "France", "population": 67000000},
 	)
 }
@@ -91,7 +92,7 @@ func TestRunReadwriteTransaction_NoMessageNoCommit(t *testing.T) {
 		t.Errorf("no-message tx must not commit: commit count got %s, want 1", n)
 	}
 	// The record was still written (just left uncommitted in the working tree).
-	got := dal.NewRecordWithData(dal.NewKeyWithID("countries", "france"), map[string]any{})
+	got := record.NewRecordWithData(record.NewKeyWithID("countries", "france"), map[string]any{})
 	if err := db.Get(ctx, got); err != nil {
 		t.Fatalf("record should still be written: %v", err)
 	}
@@ -132,7 +133,7 @@ func TestRunReadwriteTransaction_NonGitDirNoError(t *testing.T) {
 		t.Fatalf("RunReadwriteTransaction in non-git dir should not error: %v", err)
 	}
 
-	got := dal.NewRecordWithData(dal.NewKeyWithID("countries", "france"), map[string]any{})
+	got := record.NewRecordWithData(record.NewKeyWithID("countries", "france"), map[string]any{})
 	if err := db.Get(ctx, got); err != nil {
 		t.Fatalf("record should still be written: %v", err)
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/dal-go/dalgo/dal"
 
+	"github.com/dal-go/record"
 	"github.com/ingitdb/dalgo2ingitdb"
 	"github.com/ingitdb/ingitdb-go/ingitdb/validator"
 )
@@ -82,7 +83,7 @@ func TestDB_Get_ComputesFormulaColumns(t *testing.T) {
 	db, root := setupFormulaDB(t)
 	writePersonRecord(t, root, "ada", "first_name: Ada\nlast_name: Lovelace\nqty: 12\ndivisor: 4\n")
 
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("people", "ada"), map[string]any{})
+	rec := record.NewRecordWithData(record.NewKeyWithID("people", "ada"), map[string]any{})
 	if err := db.Get(context.Background(), rec); err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -103,7 +104,7 @@ func TestDB_Get_FormulaRuntimeErrorFailsRead(t *testing.T) {
 	db, root := setupFormulaDB(t)
 	writePersonRecord(t, root, "bad", "first_name: Bob\nlast_name: Zero\nqty: 5\ndivisor: 0\n")
 
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("people", "bad"), map[string]any{})
+	rec := record.NewRecordWithData(record.NewKeyWithID("people", "bad"), map[string]any{})
 	err := db.Get(context.Background(), rec)
 	if err == nil {
 		t.Fatal("expected read to fail on division by zero")
@@ -123,8 +124,8 @@ func TestDB_Query_ComputesFormulaColumns(t *testing.T) {
 	writePersonRecord(t, root, "ada", "first_name: Ada\nlast_name: Lovelace\nqty: 12\ndivisor: 4\n")
 
 	query := dal.From(dal.NewRootCollectionRef("people", "")).NewQuery().
-		SelectIntoRecord(func() dal.Record {
-			return dal.NewRecordWithData(dal.NewKeyWithID("people", ""), map[string]any{})
+		SelectIntoRecord(func() record.Record {
+			return record.NewRecordWithData(record.NewKeyWithID("people", ""), map[string]any{})
 		})
 	reader, err := db.ExecuteQueryToRecordsReader(context.Background(), query)
 	if err != nil {
@@ -148,8 +149,8 @@ func TestDB_Query_FormulaRuntimeErrorFailsRead(t *testing.T) {
 	writePersonRecord(t, root, "bad", "first_name: Bob\nlast_name: Zero\nqty: 5\ndivisor: 0\n")
 
 	query := dal.From(dal.NewRootCollectionRef("people", "")).NewQuery().
-		SelectIntoRecord(func() dal.Record {
-			return dal.NewRecordWithData(dal.NewKeyWithID("people", ""), map[string]any{})
+		SelectIntoRecord(func() record.Record {
+			return record.NewRecordWithData(record.NewKeyWithID("people", ""), map[string]any{})
 		})
 	_, err := db.ExecuteQueryToRecordsReader(context.Background(), query)
 	if err == nil {

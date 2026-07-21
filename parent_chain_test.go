@@ -10,6 +10,7 @@ import (
 	"github.com/dal-go/dalgo/dbschema"
 	"github.com/dal-go/dalgo/ddl"
 
+	"github.com/dal-go/record"
 	"github.com/ingitdb/dalgo2ingitdb"
 	"github.com/ingitdb/ingitdb-go/ingitdb/validator"
 )
@@ -65,14 +66,14 @@ func TestNestedKeys_ScopedByParentRecord(t *testing.T) {
 	db, root := setupSpacesWithContactsSubcollection(t)
 	ctx := context.Background()
 
-	familyContact := dal.NewKeyWithParentAndID(dal.NewKeyWithID("spaces", "family"), "contacts", "c1")
-	workContact := dal.NewKeyWithParentAndID(dal.NewKeyWithID("spaces", "work"), "contacts", "c1")
+	familyContact := record.NewKeyWithParentAndID(record.NewKeyWithID("spaces", "family"), "contacts", "c1")
+	workContact := record.NewKeyWithParentAndID(record.NewKeyWithID("spaces", "work"), "contacts", "c1")
 
 	if err := db.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
-		if err := tx.Set(ctx, dal.NewRecordWithData(familyContact, map[string]any{"name": "Alice"})); err != nil {
+		if err := tx.Set(ctx, record.NewRecordWithData(familyContact, map[string]any{"name": "Alice"})); err != nil {
 			return err
 		}
-		return tx.Set(ctx, dal.NewRecordWithData(workContact, map[string]any{"name": "Bob"}))
+		return tx.Set(ctx, record.NewRecordWithData(workContact, map[string]any{"name": "Bob"}))
 	}); err != nil {
 		t.Fatalf("write nested contacts: %v", err)
 	}
@@ -88,8 +89,8 @@ func TestNestedKeys_ScopedByParentRecord(t *testing.T) {
 	}
 
 	// Read each back and confirm they did NOT clobber each other.
-	famRec := dal.NewRecordWithData(familyContact, map[string]any{})
-	workRec := dal.NewRecordWithData(workContact, map[string]any{})
+	famRec := record.NewRecordWithData(familyContact, map[string]any{})
+	workRec := record.NewRecordWithData(workContact, map[string]any{})
 	if err := db.Get(ctx, famRec); err != nil {
 		t.Fatalf("get family contact: %v", err)
 	}

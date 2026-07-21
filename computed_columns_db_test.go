@@ -10,6 +10,7 @@ import (
 	"github.com/dal-go/dalgo/dbschema"
 	"github.com/dal-go/dalgo/ddl"
 
+	dalrecord "github.com/dal-go/record"
 	"github.com/ingitdb/dalgo2ingitdb"
 	"github.com/ingitdb/ingitdb-go/ingitdb/validator"
 )
@@ -68,8 +69,8 @@ func insertRecord(t *testing.T, db dal.DB, collection, key string, data map[stri
 	t.Helper()
 	ctx := context.Background()
 	return db.RunReadwriteTransaction(ctx, func(_ context.Context, tx dal.ReadwriteTransaction) error {
-		recordKey := dal.NewKeyWithID(collection, key)
-		record := dal.NewRecordWithData(recordKey, data)
+		recordKey := dalrecord.NewKeyWithID(collection, key)
+		record := dalrecord.NewRecordWithData(recordKey, data)
 		return tx.Insert(ctx, record)
 	})
 }
@@ -78,8 +79,8 @@ func setRecord(t *testing.T, db dal.DB, collection, key string, data map[string]
 	t.Helper()
 	ctx := context.Background()
 	return db.RunReadwriteTransaction(ctx, func(_ context.Context, tx dal.ReadwriteTransaction) error {
-		recordKey := dal.NewKeyWithID(collection, key)
-		record := dal.NewRecordWithData(recordKey, data)
+		recordKey := dalrecord.NewKeyWithID(collection, key)
+		record := dalrecord.NewRecordWithData(recordKey, data)
 		return tx.Set(ctx, record)
 	})
 }

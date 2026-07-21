@@ -7,8 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dal-go/dalgo/dal"
-
+	"github.com/dal-go/record"
 	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
@@ -60,7 +59,7 @@ func TestReadonlyTx_Get_MapOfRecords_ComputesFormula(t *testing.T) {
 	tx, colDef := makeFormulaMapTx(t, root)
 	writeScoresFile(t, colDef, "alice:\n  score: 5\n  divisor: 5\n")
 
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("scores", "alice"), map[string]any{})
+	rec := record.NewRecordWithData(record.NewKeyWithID("scores", "alice"), map[string]any{})
 	if err := tx.Get(context.Background(), rec); err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -76,7 +75,7 @@ func TestReadonlyTx_Get_MapOfRecords_FormulaError(t *testing.T) {
 	tx, colDef := makeFormulaMapTx(t, root)
 	writeScoresFile(t, colDef, "alice:\n  score: 5\n  divisor: 0\n")
 
-	rec := dal.NewRecordWithData(dal.NewKeyWithID("scores", "alice"), map[string]any{})
+	rec := record.NewRecordWithData(record.NewKeyWithID("scores", "alice"), map[string]any{})
 	err := tx.Get(context.Background(), rec)
 	if err == nil {
 		t.Fatal("expected formula runtime error (division by zero)")

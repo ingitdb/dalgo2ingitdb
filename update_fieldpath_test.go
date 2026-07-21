@@ -23,7 +23,8 @@ import (
 	"time"
 
 	"github.com/dal-go/dalgo/dal"
-	"github.com/dal-go/dalgo/update"
+	"github.com/dal-go/record"
+	"github.com/dal-go/record/update"
 	"gopkg.in/yaml.v3"
 )
 
@@ -333,7 +334,7 @@ func TestUpdateMulti_AppliesSameUpdatesToMultipleKeys(t *testing.T) {
 			t.Fatalf("seed %s: %v", key, err)
 		}
 	}
-	keys := []*dal.Key{dal.NewKeyWithID("items", "r1"), dal.NewKeyWithID("items", "r2")}
+	keys := []*record.Key{record.NewKeyWithID("items", "r1"), record.NewKeyWithID("items", "r2")}
 	ups := []update.Update{update.ByFieldName("name", "multi-updated")}
 	if err := tx.UpdateMulti(context.Background(), keys, ups); err != nil {
 		t.Fatalf("UpdateMulti: %v", err)
@@ -366,7 +367,7 @@ func TestUpdate_NestedPathPersisted(t *testing.T) {
 	if err := os.WriteFile(p, []byte("name: item\nmeta:\n  version: 1\n"), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	key := dal.NewKeyWithID("items", "nested1")
+	key := record.NewKeyWithID("items", "nested1")
 	ups := []update.Update{
 		update.ByFieldPath(update.FieldPath{"meta", "version"}, 99),
 	}
@@ -401,7 +402,7 @@ func TestUpdate_DeleteNestedFieldPersisted(t *testing.T) {
 	if err := os.WriteFile(p, []byte("name: item\ntags:\n  active: true\n  archived: true\n"), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	key := dal.NewKeyWithID("items", "del1")
+	key := record.NewKeyWithID("items", "del1")
 	ups := []update.Update{
 		update.ByFieldPath(update.FieldPath{"tags", "archived"}, update.DeleteField),
 	}
