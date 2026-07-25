@@ -25,8 +25,8 @@ func TestIntegration_FullLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	reader := db.(dbschema.SchemaReader)
-	modifier := db.(ddl.SchemaModifier)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 
 	events := dbschema.CollectionDef{
 		Name: "events",
@@ -118,8 +118,8 @@ func TestIntegration_ConcurrentReads(t *testing.T) {
 	if db.SupportsConcurrentConnections() {
 		t.Fatal("SupportsConcurrentConnections: want false")
 	}
-	reader := db.(dbschema.SchemaReader)
-	modifier := db.(ddl.SchemaModifier)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 
 	c := dbschema.CollectionDef{
 		Name: "events",

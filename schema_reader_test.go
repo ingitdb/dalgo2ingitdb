@@ -55,7 +55,7 @@ func TestListCollections_FindsCollectionDirs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	reader := db.(dbschema.SchemaReader)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 	refs, err := reader.ListCollections(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("ListCollections: %v", err)
@@ -78,7 +78,7 @@ func TestListCollections_ParentArgumentIgnored(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	reader := db.(dbschema.SchemaReader)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 
 	withNil, _ := reader.ListCollections(context.Background(), nil)
 	withKey, _ := reader.ListCollections(context.Background(), record.NewKeyWithID("ignored", "x"))
@@ -95,7 +95,7 @@ func TestDescribeCollection_MapsColumns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	reader := db.(dbschema.SchemaReader)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 
 	ref := dal.NewRootCollectionRef("countries", "")
 	got, err := reader.DescribeCollection(context.Background(), &ref)
@@ -129,7 +129,7 @@ func TestDescribeCollection_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	reader := db.(dbschema.SchemaReader)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 	ref := dal.NewRootCollectionRef("nonexistent", "")
 	_, err = reader.DescribeCollection(context.Background(), &ref)
 	if err == nil {
@@ -157,7 +157,7 @@ columns:
 `
 	writeCollectionDef(t, root, "items", defWithKey)
 	db, _ := NewDatabase(root, newReader())
-	reader := db.(dbschema.SchemaReader)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 	ref := dal.NewRootCollectionRef("items", "")
 	got, err := reader.DescribeCollection(context.Background(), &ref)
 	if err != nil {
@@ -175,7 +175,7 @@ func TestListIndexes_ReturnsEmpty(t *testing.T) {
 	root := t.TempDir()
 	writeCollectionDef(t, root, "tags", countriesDef)
 	db, _ := NewDatabase(root, newReader())
-	reader := db.(dbschema.SchemaReader)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 	ref := dal.NewRootCollectionRef("tags", "")
 	got, err := reader.ListIndexes(context.Background(), &ref)
 	if err != nil {
@@ -194,7 +194,7 @@ func TestListConstraints_ReturnsPK(t *testing.T) {
 	root := t.TempDir()
 	writeCollectionDef(t, root, "tags", countriesDef)
 	db, _ := NewDatabase(root, newReader())
-	reader := db.(dbschema.SchemaReader)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 	ref := dal.NewRootCollectionRef("tags", "")
 	got, err := reader.ListConstraints(context.Background(), &ref)
 	if err != nil {
@@ -213,7 +213,7 @@ func TestListReferrers_NotSupported(t *testing.T) {
 	root := t.TempDir()
 	writeCollectionDef(t, root, "tags", countriesDef)
 	db, _ := NewDatabase(root, newReader())
-	reader := db.(dbschema.SchemaReader)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 	ref := dal.NewRootCollectionRef("tags", "")
 	got, err := reader.ListReferrers(context.Background(), &ref)
 	if got != nil {

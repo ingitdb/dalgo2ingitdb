@@ -29,7 +29,7 @@ func setupSpacesWithContactsSubcollection(t *testing.T) (dal.DB, string) {
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 	col := dbschema.CollectionDef{
 		Name: "spaces",
 		Fields: []dbschema.FieldDef{

@@ -19,8 +19,8 @@ func TestCreateDescribe_PKRoundTrip_Single(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
-	reader := db.(dbschema.SchemaReader)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 
 	c := dbschema.CollectionDef{
 		Name: "Album",
@@ -65,8 +65,8 @@ func TestCreateDescribe_PKRoundTrip_Composite(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
-	reader := db.(dbschema.SchemaReader)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 
 	c := dbschema.CollectionDef{
 		Name: "PlaylistTrack",
@@ -133,7 +133,7 @@ columns_order:
 	}
 
 	db, _ := NewDatabase(root, newReader())
-	reader := db.(dbschema.SchemaReader)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 	ref := dal.NewRootCollectionRef("legacy", "")
 	got, err := reader.DescribeCollection(context.Background(), &ref)
 	if err != nil {

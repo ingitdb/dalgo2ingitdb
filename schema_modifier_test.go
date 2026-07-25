@@ -29,7 +29,7 @@ func TestCreateCollection_WritesDefinitionYAML(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 
 	if err := modifier.CreateCollection(context.Background(), tagsCollectionDef()); err != nil {
 		t.Fatalf("CreateCollection: %v", err)
@@ -62,7 +62,7 @@ func TestCreateCollection_IfNotExists(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 	c := tagsCollectionDef()
 	if err := modifier.CreateCollection(context.Background(), c); err != nil {
 		t.Fatalf("first CreateCollection: %v", err)
@@ -88,7 +88,7 @@ func TestCreateCollection_RejectsNullType(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 	bad := dbschema.CollectionDef{
 		Name: "bad",
 		Fields: []dbschema.FieldDef{
@@ -108,7 +108,7 @@ func TestCreateCollection_RejectsBadName(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 	cases := []string{"", "..", "../escape", " name", "/abs"}
 	for _, n := range cases {
 		c := dbschema.CollectionDef{Name: n, Fields: []dbschema.FieldDef{{Name: "x", Type: dbschema.String}}}
@@ -122,7 +122,7 @@ func TestDropCollection_RemovesDir(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 	if err := modifier.CreateCollection(context.Background(), tagsCollectionDef()); err != nil {
 		t.Fatalf("CreateCollection: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestDropCollection_IfExists(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 	// Missing + IfExists: nil error.
 	if err := modifier.DropCollection(context.Background(), "missing", ddl.IfExists()); err != nil {
 		t.Errorf("DropCollection IfExists on missing: got %v, want nil", err)
@@ -157,7 +157,7 @@ func TestDropCollection_RefusesNonCollectionDir(t *testing.T) {
 		t.Fatalf("mkdir docs: %v", err)
 	}
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 	if err := modifier.DropCollection(context.Background(), "docs"); err == nil {
 		t.Error("DropCollection on non-collection dir: want error")
 	}
@@ -170,8 +170,8 @@ func TestAlterCollection_AddField(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
-	reader := db.(dbschema.SchemaReader)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 
 	tags := dbschema.CollectionDef{
 		Name:   "tags",
@@ -198,8 +198,8 @@ func TestAlterCollection_DropField(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
-	reader := db.(dbschema.SchemaReader)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 
 	if err := modifier.CreateCollection(context.Background(), tagsCollectionDef()); err != nil {
 		t.Fatalf("CreateCollection: %v", err)
@@ -236,8 +236,8 @@ func TestAlterCollection_RenameField(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
-	reader := db.(dbschema.SchemaReader)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 
 	tags := dbschema.CollectionDef{
 		Name:   "tags",
@@ -278,8 +278,8 @@ func TestAlterCollection_PartialSuccessError(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
-	reader := db.(dbschema.SchemaReader)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 
 	tags := dbschema.CollectionDef{
 		Name:   "tags",
@@ -315,7 +315,7 @@ func TestAlterCollection_AddIndexLogsWarning(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 	if err := modifier.CreateCollection(context.Background(), tagsCollectionDef()); err != nil {
 		t.Fatalf("CreateCollection: %v", err)
 	}

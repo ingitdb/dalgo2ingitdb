@@ -38,8 +38,8 @@ func TestDatabase_ID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	if db.(*Database).ID() != DatabaseID {
-		t.Errorf("ID: got %q, want %q", db.(*Database).ID(), DatabaseID)
+	if dal.BackendOf(db).(*Database).ID() != DatabaseID {
+		t.Errorf("ID: got %q, want %q", dal.BackendOf(db).(*Database).ID(), DatabaseID)
 	}
 }
 
@@ -49,7 +49,7 @@ func TestDatabase_Adapter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	a := db.(*Database).Adapter()
+	a := dal.BackendOf(db).(*Database).Adapter()
 	if a.Name() != DatabaseID {
 		t.Errorf("Adapter.Name: got %q, want %q", a.Name(), DatabaseID)
 	}
@@ -61,7 +61,7 @@ func TestDatabase_Schema_ReturnsNil(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	if db.(*Database).Schema() != nil {
+	if dal.BackendOf(db).(*Database).Schema() != nil {
 		t.Error("Schema: want nil")
 	}
 }
@@ -72,7 +72,7 @@ func TestDatabase_ExecuteQueryToRecordsetReader_NotSupported(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	_, gotErr := db.(*Database).ExecuteQueryToRecordsetReader(context.Background(), nil)
+	_, gotErr := dal.BackendOf(db).(*Database).ExecuteQueryToRecordsetReader(context.Background(), nil)
 	if gotErr == nil {
 		t.Fatal("want error from ExecuteQueryToRecordsetReader")
 	}
@@ -1519,8 +1519,8 @@ func TestAlterCollection_ModifyField_TypeAndNullability(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
-	reader := db.(dbschema.SchemaReader)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 
 	tags := dbschema.CollectionDef{
 		Name:   "tags",
@@ -1554,8 +1554,8 @@ func TestAlterCollection_ModifyField_RenameViaSameOp(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
-	reader := db.(dbschema.SchemaReader)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 
 	tags := dbschema.CollectionDef{
 		Name:   "tags",
@@ -1604,7 +1604,7 @@ func TestAlterCollection_ModifyField_ColumnNotFound(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 
 	tags := dbschema.CollectionDef{
 		Name:   "tags",
@@ -1623,7 +1623,7 @@ func TestAlterCollection_ModifyField_TargetNameConflict(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 
 	tags := dbschema.CollectionDef{
 		Name: "tags",
@@ -1646,7 +1646,7 @@ func TestAlterCollection_DropIndex_IsNoOp(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 	if err := modifier.CreateCollection(context.Background(), tagsCollectionDef()); err != nil {
 		t.Fatalf("CreateCollection: %v", err)
 	}
@@ -1660,8 +1660,8 @@ func TestAlterCollection_AddField_ConflictAndIfNotExists(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
-	reader := db.(dbschema.SchemaReader)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 
 	tags := dbschema.CollectionDef{
 		Name:   "tags",
@@ -1693,7 +1693,7 @@ func TestAlterCollection_DropField_IfExists(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 
 	tags := dbschema.CollectionDef{
 		Name:   "tags",
@@ -1720,7 +1720,7 @@ func TestAlterCollection_RenameField_Conflict(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 
 	tags := dbschema.CollectionDef{
 		Name: "tags",
@@ -1742,7 +1742,7 @@ func TestAlterCollection_RenameField_NotFound(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 
 	tags := dbschema.CollectionDef{
 		Name:   "tags",
@@ -1760,7 +1760,7 @@ func TestAlterCollection_BadCollectionName(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 	// Empty name is invalid.
 	err := modifier.AlterCollection(context.Background(), "")
 	if err == nil {
@@ -1772,7 +1772,7 @@ func TestAlterCollection_CollectionNotFound(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 	// Collection "noexist" has no definition.yaml.
 	err := modifier.AlterCollection(context.Background(), "noexist",
 		ddl.AddField(dbschema.FieldDef{Name: "x", Type: dbschema.String}))
@@ -1785,7 +1785,7 @@ func TestAlterCollection_AddField_NilColumns(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 	// Create a minimal collection (no fields).
 	if err := modifier.CreateCollection(context.Background(), dbschema.CollectionDef{Name: "empty"}); err != nil {
 		t.Fatalf("CreateCollection: %v", err)
@@ -1800,7 +1800,7 @@ func TestAlterCollection_ApplyAddIndex_IsNoOp(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 	if err := modifier.CreateCollection(context.Background(), tagsCollectionDef()); err != nil {
 		t.Fatalf("CreateCollection: %v", err)
 	}
@@ -1897,7 +1897,7 @@ func TestDescribeCollection_NilRef(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	reader := db.(dbschema.SchemaReader)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 	_, err := reader.DescribeCollection(context.Background(), nil)
 	if err == nil {
 		t.Fatal("want error for nil ref")
@@ -1918,7 +1918,7 @@ columns:
 `
 	writeCollectionDef(t, root, "items", defYAML)
 	db, _ := NewDatabase(root, newReader())
-	reader := db.(dbschema.SchemaReader)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 	ref := dal.NewRootCollectionRef("items", "")
 	_, err := reader.DescribeCollection(context.Background(), &ref)
 	if err == nil {
@@ -1941,7 +1941,7 @@ columns:
 `
 	writeCollectionDef(t, root, "items", defYAML)
 	db, _ := NewDatabase(root, newReader())
-	reader := db.(dbschema.SchemaReader)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 	ref := dal.NewRootCollectionRef("items", "")
 	got, err := reader.DescribeCollection(context.Background(), &ref)
 	if err != nil {
@@ -2178,7 +2178,7 @@ func TestDeregisterFromRootCollections_KeyAbsent(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 	// Create one collection to ensure the file exists.
 	if err := modifier.CreateCollection(context.Background(), tagsCollectionDef()); err != nil {
 		t.Fatalf("CreateCollection: %v", err)

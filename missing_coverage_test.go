@@ -708,7 +708,7 @@ func TestCreateCollection_IfNotExists_RegisterFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 
 	// Create the collection first.
 	err = modifier.CreateCollection(context.Background(), tagsCollectionDef())
@@ -754,7 +754,7 @@ func TestCreateCollection_WithIndexes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 
 	col := dbschema.CollectionDef{
 		Name:   "indexed",
@@ -870,7 +870,7 @@ func TestDropCollection_DeregisterFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 
 	err = modifier.CreateCollection(context.Background(), tagsCollectionDef())
 	if err != nil {
@@ -909,7 +909,7 @@ func TestAlterCollection_FlushError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 
 	tags := dbschema.CollectionDef{
 		Name:   "tags",
@@ -1086,7 +1086,7 @@ func TestListCollections_WalkError(t *testing.T) {
 	}
 	defer func() { _ = os.Chmod(root, 0o755) }()
 
-	reader := db.(dbschema.SchemaReader)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 	_, err = reader.ListCollections(context.Background(), nil)
 	if err == nil {
 		t.Fatal("ListCollections: want error for unreadable project directory")
@@ -1116,7 +1116,7 @@ func TestListCollections_SkipsRootDefinitionYAML(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	reader := db.(dbschema.SchemaReader)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 	refs, err := reader.ListCollections(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("ListCollections: %v", err)
@@ -1153,7 +1153,7 @@ func TestDescribeCollection_StatNonNotFoundError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	reader := db.(dbschema.SchemaReader)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 	ref := dal.NewRootCollectionRef("tags", "")
 	_, err = reader.DescribeCollection(context.Background(), &ref)
 	if err == nil {
@@ -1186,7 +1186,7 @@ func TestDescribeCollection_YAMLParseError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	reader := db.(dbschema.SchemaReader)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 	ref := dal.NewRootCollectionRef("tags", "")
 	_, err = reader.DescribeCollection(context.Background(), &ref)
 	if err == nil {
@@ -1213,7 +1213,7 @@ columns:
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	reader := db.(dbschema.SchemaReader)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 	ref := dal.NewRootCollectionRef("items", "")
 	_, err = reader.DescribeCollection(context.Background(), &ref)
 	if err == nil {
@@ -1822,7 +1822,7 @@ func TestAlterCollection_ReadDefError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 
 	// Create the collection normally first.
 	err = modifier.CreateCollection(context.Background(), tagsCollectionDef())
@@ -1857,7 +1857,7 @@ func TestApplyAddField_UnknownType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 
 	err = modifier.CreateCollection(context.Background(), tagsCollectionDef())
 	if err != nil {
@@ -1885,7 +1885,7 @@ func TestApplyModifyField_UnknownType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 
 	err = modifier.CreateCollection(context.Background(), tagsCollectionDef())
 	if err != nil {
@@ -2376,7 +2376,7 @@ func TestDescribeCollection_ReadInsideLockError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	reader := db.(dbschema.SchemaReader)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 	ref := dal.NewRootCollectionRef("tags", "")
 	_, err = reader.DescribeCollection(context.Background(), &ref)
 	if err == nil {
@@ -2631,7 +2631,7 @@ func TestDropCollection_RemoveAllError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 
 	err = modifier.CreateCollection(context.Background(), tagsCollectionDef())
 	if err != nil {
@@ -2672,7 +2672,7 @@ func TestAlterCollection_FlushPartialSuccessError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 
 	tags := dbschema.CollectionDef{
 		Name:   "tags",

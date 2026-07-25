@@ -24,7 +24,7 @@ func TestCreateCollection_SubCollection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 	ctx := context.Background()
 
 	fields := []dbschema.FieldDef{{Name: "title", Type: dbschema.String, Nullable: true}}
