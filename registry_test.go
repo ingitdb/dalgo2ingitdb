@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/dalgo/dbschema"
 	"github.com/dal-go/dalgo/ddl"
 
@@ -46,7 +47,7 @@ func TestCreateCollection_RegistersInRootCollections_FreshProject(t *testing.T) 
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 
 	if err := modifier.CreateCollection(context.Background(), tagsCollectionDef()); err != nil {
 		t.Fatalf("CreateCollection: %v", err)
@@ -76,7 +77,7 @@ func TestCreateCollection_AppendsToExistingRootCollections(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 
 	if err := modifier.CreateCollection(context.Background(), tagsCollectionDef()); err != nil {
 		t.Fatalf("CreateCollection tags: %v", err)
@@ -96,7 +97,7 @@ func TestCreateCollection_IdempotentRegistryWithIfNotExists(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 
 	if err := modifier.CreateCollection(context.Background(), tagsCollectionDef()); err != nil {
 		t.Fatalf("CreateCollection: %v", err)
@@ -131,7 +132,7 @@ func TestCreateCollection_RejectsRegistryConflict(t *testing.T) {
 	}
 
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 
 	err := modifier.CreateCollection(context.Background(), tagsCollectionDef())
 	if err == nil {
@@ -153,7 +154,7 @@ func TestDropCollection_DeregistersFromRootCollections(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 
 	if err := modifier.CreateCollection(context.Background(), tagsCollectionDef()); err != nil {
 		t.Fatalf("CreateCollection tags: %v", err)
@@ -192,7 +193,7 @@ func TestDropCollection_TolerantOfMissingRegistry(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	db, _ := NewDatabase(root, newReader())
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 
 	if err := modifier.CreateCollection(context.Background(), tagsCollectionDef()); err != nil {
 		t.Fatalf("CreateCollection: %v", err)

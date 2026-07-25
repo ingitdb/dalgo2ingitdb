@@ -27,7 +27,7 @@ func TestNewDatabase_OpensExistingPath(t *testing.T) {
 	if _, ok := db.(dal.ConcurrencyAware); !ok {
 		t.Error("db should satisfy dal.ConcurrencyAware")
 	}
-	if _, ok := db.(ddl.TransactionalDDL); !ok {
+	if _, ok := dal.As[ddl.TransactionalDDL](db); !ok {
 		t.Error("db should satisfy ddl.TransactionalDDL")
 	}
 }

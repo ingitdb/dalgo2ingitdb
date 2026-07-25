@@ -64,10 +64,10 @@ func NewDatabase(projectPath string, reader ingitdb.CollectionsReader) (dal.DB, 
 	if !info.IsDir() {
 		return nil, fmt.Errorf("dalgo2ingitdb: %s is not a directory", projectPath)
 	}
-	return &Database{
+	return dal.NewDB(&Database{
 		projectPath: projectPath,
 		reader:      reader,
-	}, nil
+	}), nil
 }
 
 // DatabaseID is the name reported by Database.ID() and used as the
@@ -198,6 +198,6 @@ func (db *Database) ExecuteQueryToRecordsetReader(_ context.Context, _ dal.Query
 // Compile-time interface checks. SchemaReader / SchemaModifier assertions
 // live in schema_reader.go / schema_modifier.go.
 var (
-	_ dal.DB               = (*Database)(nil)
+	_ dal.Backend          = (*Database)(nil)
 	_ ddl.TransactionalDDL = (*Database)(nil)
 )

@@ -31,7 +31,7 @@ func setupForeignKeyDBWithParentRequired(t *testing.T, foreignKeyTarget string, 
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 	parent := dbschema.CollectionDef{
 		Name: "parents",
 		Fields: []dbschema.FieldDef{

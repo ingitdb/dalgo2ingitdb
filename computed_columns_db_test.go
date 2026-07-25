@@ -24,7 +24,7 @@ func setupComputedColumnDB(t *testing.T) (dal.DB, string) {
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 	people := dbschema.CollectionDef{
 		Name: "people",
 		Fields: []dbschema.FieldDef{

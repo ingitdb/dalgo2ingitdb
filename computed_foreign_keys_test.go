@@ -35,7 +35,7 @@ func setupComputedForeignKeyDBWith(t *testing.T, fkTarget, formula string, input
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	modifier := db.(ddl.SchemaModifier)
+	modifier, _ := dal.As[ddl.SchemaModifier](db)
 	users := dbschema.CollectionDef{
 		Name: "users",
 		Fields: []dbschema.FieldDef{

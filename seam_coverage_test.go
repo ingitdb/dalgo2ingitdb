@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/dalgo/dbschema"
 
 	ingitdb "github.com/ingitdb/ingitdb-go/ingitdb"
@@ -95,7 +96,7 @@ func TestListCollections_RelError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}
-	reader := db.(dbschema.SchemaReader)
+	reader, _ := dal.As[dbschema.SchemaReader](db)
 	_, err = reader.ListCollections(context.Background(), nil)
 	if err == nil {
 		t.Fatal("ListCollections: want error when filepath.Rel fails")
