@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // restoreSnapshots puts every touched record file back exactly as it was at
@@ -39,30 +40,12 @@ func restoreSnapshots(snapshots map[string]fileSnapshot) error {
 	return nil
 }
 
-// gitUnstagePaths removes only paths this transaction staged after a failed
-// commit. A caller must use a clean single-writer worktree; we do not reset
-// the whole index because unrelated user staging must never be discarded.
-func gitUnstagePaths(ctx context.Context, repoDir string, paths []string) error {
-	if !isInsideGitWorkTree(ctx, repoDir) {
-		return nil
-	}
-	paths = dedupeStrings(paths)
-	if len(paths) == 0 {
-		return nil
-	}
-	args := append([]string{"-C", repoDir, "reset", "--"}, paths...)
-	if out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput(); err != nil {
-		return fmt.Errorf("dalgo2ingitdb: git reset changed paths: %w: %s", err, out)
-	}
-	return nil
-}
-
 // gitCommitPaths stages exactly the given record-file paths in the git
-// repository that contains repoDir and commits them with message. It is used
-// by RunReadwriteTransaction for the opt-in commit triggered by a transaction
-// message. Paths are deduplicated (a record written several times in one
-// transaction yields one staged path). git is invoked with -C repoDir so the
-// enclosing repository is discovered even when repoDir is a subdirectory.
+// repository that contains repoDir and commits them with message. It never
+// changes the caller's real index: a disposable index starts from HEAD, adds
+// only paths, and is committed with Git plumbing. This is essential because a
+// normal `git commit` would include unrelated pre-staged changes, while a
+// failure rollback/reset could erase them.
 func gitCommitPaths(ctx context.Context, repoDir string, paths []string, message string) error {
 	staged := dedupeStrings(paths)
 	if len(staged) == 0 {
@@ -85,15 +68,72 @@ func gitCommitPaths(ctx context.Context, repoDir string, paths []string, message
 			staged[i] = abs
 		}
 	}
-	addArgs := append([]string{"-C", repoDir, "add", "--"}, staged...)
-	if out, err := exec.CommandContext(ctx, "git", addArgs...).CombinedOutput(); err != nil {
+	index, err := os.CreateTemp("", "dalgo2ingitdb-index-*")
+	if err != nil {
+		return fmt.Errorf("dalgo2ingitdb: create temporary index: %w", err)
+	}
+	indexPath := index.Name()
+	if err := index.Close(); err != nil {
+		_ = os.Remove(indexPath)
+		return fmt.Errorf("dalgo2ingitdb: close temporary index: %w", err)
+	}
+	defer func() { _ = os.Remove(indexPath) }()
+
+	env := append(os.Environ(), "GIT_INDEX_FILE="+indexPath)
+	run := func(args ...string) ([]byte, error) {
+		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", repoDir}, args...)...)
+		cmd.Env = env
+		return cmd.CombinedOutput()
+	}
+
+	oldHead, hasHead := gitHead(ctx, repoDir)
+	if hasHead {
+		if out, err := run("read-tree", oldHead); err != nil {
+			return fmt.Errorf("dalgo2ingitdb: seed temporary index: %w: %s", err, out)
+		}
+	} else if out, err := run("read-tree", "--empty"); err != nil {
+		return fmt.Errorf("dalgo2ingitdb: initialise temporary index: %w: %s", err, out)
+	}
+	addArgs := append([]string{"add", "--"}, staged...)
+	if out, err := run(addArgs...); err != nil {
 		return fmt.Errorf("dalgo2ingitdb: git add: %w: %s", err, out)
 	}
-	out, err := exec.CommandContext(ctx, "git", "-C", repoDir, "commit", "-m", message).CombinedOutput()
+	tree, err := run("write-tree")
 	if err != nil {
-		return fmt.Errorf("dalgo2ingitdb: git commit: %w: %s", err, out)
+		return fmt.Errorf("dalgo2ingitdb: write transaction tree: %w: %s", err, tree)
+	}
+	commitArgs := []string{"commit-tree", strings.TrimSpace(string(tree))}
+	if hasHead {
+		commitArgs = append(commitArgs, "-p", oldHead)
+	}
+	commit := exec.CommandContext(ctx, "git", append([]string{"-C", repoDir}, commitArgs...)...)
+	commit.Env = env
+	commit.Stdin = strings.NewReader(message + "\n")
+	newHead, err := commit.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("dalgo2ingitdb: create transaction commit: %w: %s", err, newHead)
+	}
+	newHeadID := strings.TrimSpace(string(newHead))
+	updateArgs := []string{"update-ref", "HEAD", newHeadID}
+	if hasHead {
+		updateArgs = append(updateArgs, oldHead)
+	} else {
+		updateArgs = append(updateArgs, strings.Repeat("0", 40))
+	}
+	if out, err := run(updateArgs...); err != nil {
+		return fmt.Errorf("dalgo2ingitdb: publish transaction commit: %w: %s", err, out)
 	}
 	return nil
+}
+
+// gitHead returns the current commit ID. An unborn branch has no HEAD commit
+// and is a supported starting point for the first transaction commit.
+func gitHead(ctx context.Context, repoDir string) (string, bool) {
+	out, err := exec.CommandContext(ctx, "git", "-C", repoDir, "rev-parse", "--verify", "HEAD^{commit}").Output()
+	if err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(string(out)), true
 }
 
 // isInsideGitWorkTree reports whether dir is inside a git work tree.

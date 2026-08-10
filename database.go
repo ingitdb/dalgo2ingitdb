@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/dalgo/ddl"
@@ -127,6 +128,17 @@ func (db *Database) RunReadonlyTransaction(ctx context.Context, f dal.ROTxWorker
 // multi-record Synchestra state transition recoverable without pretending that
 // a Git worktree supports concurrent multi-writer transactions.
 func (db *Database) RunReadwriteTransaction(ctx context.Context, f dal.RWTxWorker, options ...dal.TransactionOption) error {
+	// This lock covers definition load, all record mutations, rollback, and the
+	// optional Git ref update. It serialises cooperating Database writers for
+	// the complete transaction; Git/editor processes that ignore advisory locks
+	// remain outside this adapter's explicit single-writer contract.
+	lockPath := filepath.Join(db.projectPath, ".dalgo2ingitdb.transaction.lock")
+	return withExclusiveLock(lockPath, func() error {
+		return db.runReadwriteTransaction(ctx, f, options...)
+	})
+}
+
+func (db *Database) runReadwriteTransaction(ctx context.Context, f dal.RWTxWorker, options ...dal.TransactionOption) error {
 	def, err := db.loadDefinition()
 	if err != nil {
 		return err
@@ -134,29 +146,17 @@ func (db *Database) RunReadwriteTransaction(ctx context.Context, f dal.RWTxWorke
 	opts := dal.NewTransactionOptions(options...)
 	written := &[]string{}
 	snapshots := make(map[string]fileSnapshot)
-	tx := readwriteTx{
-		readonlyTx: readonlyTx{db: db, def: def, opts: opts},
-		written:    written,
-		snapshots:  snapshots,
-	}
+	tx := readwriteTx{readonlyTx: readonlyTx{db: db, def: def, opts: opts}, written: written, snapshots: snapshots}
 	if err = f(ctx, tx); err != nil {
 		if rollbackErr := restoreSnapshots(snapshots); rollbackErr != nil {
 			return fmt.Errorf("transaction failed: %w; rollback failed: %v", err, rollbackErr)
 		}
 		return err
 	}
-	// Opt-in git commit: when the worker provided a transaction message (via
-	// dal.TxWithMessage at start or tx.Options().SetMessage during execution)
-	// and at least one record file was written, stage exactly those files and
-	// commit them with the message. With no message, behaviour is unchanged
-	// (files are left in the working tree, uncommitted).
 	if msg := opts.Message(); msg != "" && len(*written) > 0 {
 		if err = gitCommitPaths(ctx, db.projectPath, *written, msg); err != nil {
 			if rollbackErr := restoreSnapshots(snapshots); rollbackErr != nil {
 				return fmt.Errorf("commit failed: %w; rollback failed: %v", err, rollbackErr)
-			}
-			if unstageErr := gitUnstagePaths(ctx, db.projectPath, *written); unstageErr != nil {
-				return fmt.Errorf("commit failed: %w; unstage rollback paths: %v", err, unstageErr)
 			}
 			return err
 		}

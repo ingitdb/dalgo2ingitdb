@@ -38,6 +38,19 @@ func git(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+func gitIndexBytes(t *testing.T, dir string) []byte {
+	t.Helper()
+	indexPath := git(t, dir, "rev-parse", "--git-path", "index")
+	if !filepath.IsAbs(indexPath) {
+		indexPath = filepath.Join(dir, indexPath)
+	}
+	contents, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return contents
+}
+
 func franceRecord() record.Record {
 	return record.NewRecordWithData(
 		record.NewKeyWithID("countries", "france"),
@@ -172,5 +185,120 @@ func TestRunReadwriteTransaction_RollsBackAllWrittenFilesOnWorkerFailure(t *test
 		if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
 			t.Errorf("%s exists after rollback: stat error = %v", key, statErr)
 		}
+	}
+}
+
+// TestRunReadwriteTransaction_WorkerFailurePreservesPreexistingIndex proves a
+// failed transaction restores the worktree without using a broad index reset.
+// In particular, a user's staged record and unrelated staged file survive
+// exactly as they were before the worker started.
+func TestRunReadwriteTransaction_WorkerFailurePreservesPreexistingIndex(t *testing.T) {
+	ctx := context.Background()
+	db, root := setupSingleRecordDB(t)
+	gitInit(t, root)
+	git(t, root, "commit", "--allow-empty", "-m", "init")
+
+	if err := db.RunReadwriteTransaction(ctx, func(_ context.Context, tx dal.ReadwriteTransaction) error {
+		return tx.Set(ctx, franceRecord())
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recordPath := filepath.Join(root, "countries", "$records", "france.yaml")
+	if err := os.WriteFile(filepath.Join(root, "unrelated.txt"), []byte("keep staged\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "add", "--", recordPath, "unrelated.txt")
+	indexBefore := gitIndexBytes(t, root)
+
+	err := db.RunReadwriteTransaction(ctx, func(_ context.Context, tx dal.ReadwriteTransaction) error {
+		if err := tx.Set(ctx, record.NewRecordWithData(record.NewKeyWithID("countries", "france"), map[string]any{"name": "France", "population": 1})); err != nil {
+			return err
+		}
+		return errors.New("inject worker failure")
+	})
+	if err == nil {
+		t.Fatal("worker failure unexpectedly succeeded")
+	}
+	if got := gitIndexBytes(t, root); string(got) != string(indexBefore) {
+		t.Fatal("rollback changed pre-existing index bytes")
+	}
+	got := record.NewRecordWithData(record.NewKeyWithID("countries", "france"), map[string]any{})
+	if err := db.Get(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	if population := got.Data().(map[string]any)["population"]; population != 67000000 {
+		t.Fatalf("rollback record population = %v, want 67000000", population)
+	}
+}
+
+// TestRunReadwriteTransaction_CommitUsesOnlyTransactionPaths verifies that a
+// message commit is built from an isolated index, so unrelated staging and a
+// pre-staged version of the touched record cannot leak into the commit.
+func TestRunReadwriteTransaction_CommitUsesOnlyTransactionPaths(t *testing.T) {
+	ctx := context.Background()
+	db, root := setupSingleRecordDB(t)
+	gitInit(t, root)
+	git(t, root, "commit", "--allow-empty", "-m", "init")
+	if err := db.RunReadwriteTransaction(ctx, func(_ context.Context, tx dal.ReadwriteTransaction) error {
+		return tx.Set(ctx, franceRecord())
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recordPath := filepath.Join(root, "countries", "$records", "france.yaml")
+	if err := os.WriteFile(filepath.Join(root, "unrelated.txt"), []byte("must not commit\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "add", "--", recordPath, "unrelated.txt")
+	indexBefore := gitIndexBytes(t, root)
+
+	if err := db.RunReadwriteTransaction(ctx, func(_ context.Context, tx dal.ReadwriteTransaction) error {
+		return tx.Set(ctx, record.NewRecordWithData(record.NewKeyWithID("countries", "france"), map[string]any{"name": "France", "population": 68000000}))
+	}, dal.TxWithMessage("commit only France")); err != nil {
+		t.Fatal(err)
+	}
+	if files := git(t, root, "show", "--name-only", "--pretty=format:", "HEAD"); strings.Contains(files, "unrelated.txt") {
+		t.Fatalf("transaction commit included unrelated staged file:\n%s", files)
+	}
+	if got := gitIndexBytes(t, root); string(got) != string(indexBefore) {
+		t.Fatal("commit changed caller index bytes")
+	}
+}
+
+// TestRunReadwriteTransaction_CommitFailureRestoresWorktreeAndIndex verifies
+// that a Git identity failure leaves the caller's pre-existing index byte-for-
+// byte intact while rolling the record file back.
+func TestRunReadwriteTransaction_CommitFailureRestoresWorktreeAndIndex(t *testing.T) {
+	ctx := context.Background()
+	db, root := setupSingleRecordDB(t)
+	gitInit(t, root)
+	git(t, root, "commit", "--allow-empty", "-m", "init")
+	if err := db.RunReadwriteTransaction(ctx, func(_ context.Context, tx dal.ReadwriteTransaction) error {
+		return tx.Set(ctx, franceRecord())
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recordPath := filepath.Join(root, "countries", "$records", "france.yaml")
+	if err := os.WriteFile(filepath.Join(root, "unrelated.txt"), []byte("keep staged\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "add", "--", recordPath, "unrelated.txt")
+	indexBefore := gitIndexBytes(t, root)
+	git(t, root, "config", "user.name", "")
+
+	err := db.RunReadwriteTransaction(ctx, func(_ context.Context, tx dal.ReadwriteTransaction) error {
+		return tx.Set(ctx, record.NewRecordWithData(record.NewKeyWithID("countries", "france"), map[string]any{"name": "France", "population": 1}))
+	}, dal.TxWithMessage("must fail"))
+	if err == nil {
+		t.Fatal("commit with empty user.name unexpectedly succeeded")
+	}
+	if got := gitIndexBytes(t, root); string(got) != string(indexBefore) {
+		t.Fatal("failed commit changed caller index bytes")
+	}
+	got := record.NewRecordWithData(record.NewKeyWithID("countries", "france"), map[string]any{})
+	if err := db.Get(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	if population := got.Data().(map[string]any)["population"]; population != 67000000 {
+		t.Fatalf("failed commit left changed record population = %v, want 67000000", population)
 	}
 }
