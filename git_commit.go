@@ -2,10 +2,60 @@ package dalgo2ingitdb
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 )
+
+// restoreSnapshots puts every touched record file back exactly as it was at
+// transaction start. Restoring in a deterministic order makes failure
+// diagnosis reproducible; the adapter is single-writer, so no concurrent
+// writer can legitimately replace one of these paths between snapshot and
+// rollback.
+func restoreSnapshots(snapshots map[string]fileSnapshot) error {
+	paths := make([]string, 0, len(snapshots))
+	for path := range snapshots {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		snapshot := snapshots[path]
+		if !snapshot.exists {
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("remove created path %s: %w", path, err)
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return fmt.Errorf("create rollback parent %s: %w", path, err)
+		}
+		if err := os.WriteFile(path, snapshot.data, snapshot.mode.Perm()); err != nil {
+			return fmt.Errorf("restore %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+// gitUnstagePaths removes only paths this transaction staged after a failed
+// commit. A caller must use a clean single-writer worktree; we do not reset
+// the whole index because unrelated user staging must never be discarded.
+func gitUnstagePaths(ctx context.Context, repoDir string, paths []string) error {
+	if !isInsideGitWorkTree(ctx, repoDir) {
+		return nil
+	}
+	paths = dedupeStrings(paths)
+	if len(paths) == 0 {
+		return nil
+	}
+	args := append([]string{"-C", repoDir, "reset", "--"}, paths...)
+	if out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput(); err != nil {
+		return fmt.Errorf("dalgo2ingitdb: git reset changed paths: %w: %s", err, out)
+	}
+	return nil
+}
 
 // gitCommitPaths stages exactly the given record-file paths in the git
 // repository that contains repoDir and commits them with message. It is used

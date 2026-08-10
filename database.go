@@ -120,10 +120,12 @@ func (db *Database) RunReadonlyTransaction(ctx context.Context, f dal.ROTxWorker
 }
 
 // RunReadwriteTransaction loads the project Definition and invokes the
-// worker with a read-write transaction. inGitDB does not guarantee
-// atomicity across multiple file writes within a transaction; each
-// individual file write is locked exclusively, but a worker that fails
-// after writing some files leaves those writes in place.
+// worker with a read-write transaction. Writes are journaled in-memory before
+// their first filesystem mutation. If the worker or the optional Git commit
+// fails, the touched files are restored to their exact pre-transaction state.
+// This is deliberately a single-writer transaction: it makes a failed
+// multi-record Synchestra state transition recoverable without pretending that
+// a Git worktree supports concurrent multi-writer transactions.
 func (db *Database) RunReadwriteTransaction(ctx context.Context, f dal.RWTxWorker, options ...dal.TransactionOption) error {
 	def, err := db.loadDefinition()
 	if err != nil {
@@ -131,11 +133,16 @@ func (db *Database) RunReadwriteTransaction(ctx context.Context, f dal.RWTxWorke
 	}
 	opts := dal.NewTransactionOptions(options...)
 	written := &[]string{}
+	snapshots := make(map[string]fileSnapshot)
 	tx := readwriteTx{
 		readonlyTx: readonlyTx{db: db, def: def, opts: opts},
 		written:    written,
+		snapshots:  snapshots,
 	}
 	if err = f(ctx, tx); err != nil {
+		if rollbackErr := restoreSnapshots(snapshots); rollbackErr != nil {
+			return fmt.Errorf("transaction failed: %w; rollback failed: %v", err, rollbackErr)
+		}
 		return err
 	}
 	// Opt-in git commit: when the worker provided a transaction message (via
@@ -145,6 +152,12 @@ func (db *Database) RunReadwriteTransaction(ctx context.Context, f dal.RWTxWorke
 	// (files are left in the working tree, uncommitted).
 	if msg := opts.Message(); msg != "" && len(*written) > 0 {
 		if err = gitCommitPaths(ctx, db.projectPath, *written, msg); err != nil {
+			if rollbackErr := restoreSnapshots(snapshots); rollbackErr != nil {
+				return fmt.Errorf("commit failed: %w; rollback failed: %v", err, rollbackErr)
+			}
+			if unstageErr := gitUnstagePaths(ctx, db.projectPath, *written); unstageErr != nil {
+				return fmt.Errorf("commit failed: %w; unstage rollback paths: %v", err, unstageErr)
+			}
 			return err
 		}
 	}

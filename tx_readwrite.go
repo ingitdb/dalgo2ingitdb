@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/dal-go/dalgo/dal"
@@ -30,6 +31,43 @@ type readwriteTx struct {
 	// for transactions created outside RunReadwriteTransaction (e.g. DB-level
 	// helpers), in which case tracking is a no-op.
 	written *[]string
+	// snapshots holds the first pre-mutation state of every touched file. It
+	// belongs to the surrounding transaction, not to an individual record
+	// operation, so an error after several writes can restore them all.
+	snapshots map[string]fileSnapshot
+}
+
+type fileSnapshot struct {
+	exists bool
+	mode   fs.FileMode
+	data   []byte
+}
+
+// snapshot records path before its first mutation. It is intentionally called
+// immediately before a write/delete rather than after it, so a failed worker
+// never leaks a partial multi-record state transition.
+func (r readwriteTx) snapshot(path string) error {
+	if r.snapshots == nil {
+		return nil
+	}
+	path = filepath.Clean(path)
+	if _, ok := r.snapshots[path]; ok {
+		return nil
+	}
+	info, err := os.Stat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		r.snapshots[path] = fileSnapshot{}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("snapshot stat %s: %w", path, err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("snapshot read %s: %w", path, err)
+	}
+	r.snapshots[path] = fileSnapshot{exists: true, mode: info.Mode(), data: data}
+	return nil
 }
 
 // track records a mutated record-file path for the opt-in commit step.
@@ -68,6 +106,9 @@ func (r readwriteTx) Set(_ context.Context, record dalrecord2.Record) error {
 		return err
 	}
 	path := resolveRecordPath(colDef, recordKey)
+	if err := r.snapshot(path); err != nil {
+		return err
+	}
 	switch colDef.RecordFile.RecordType {
 	case ingitdb.SingleRecord:
 		if err := writeSingleRecordFile(path, colDef, data); err != nil {
@@ -127,6 +168,9 @@ func (r readwriteTx) Insert(_ context.Context, record dalrecord2.Record, _ ...da
 		return err
 	}
 	path := resolveRecordPath(colDef, recordKey)
+	if err := r.snapshot(path); err != nil {
+		return err
+	}
 	switch colDef.RecordFile.RecordType {
 	case ingitdb.SingleRecord:
 		if _, statErr := os.Stat(path); statErr == nil {
@@ -196,6 +240,9 @@ func (r readwriteTx) Delete(_ context.Context, key *dalrecord2.Key) error {
 		}
 	}
 	path := resolveRecordPath(colDef, recordKey)
+	if err := r.snapshot(path); err != nil {
+		return err
+	}
 	switch colDef.RecordFile.RecordType {
 	case ingitdb.SingleRecord:
 		_, statErr := os.Stat(path)

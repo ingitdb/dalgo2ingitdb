@@ -2,7 +2,10 @@ package dalgo2ingitdb_test
 
 import (
 	"context"
+	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -136,5 +139,38 @@ func TestRunReadwriteTransaction_NonGitDirNoError(t *testing.T) {
 	got := record.NewRecordWithData(record.NewKeyWithID("countries", "france"), map[string]any{})
 	if err := db.Get(ctx, got); err != nil {
 		t.Fatalf("record should still be written: %v", err)
+	}
+}
+
+// A state transition commonly writes a domain record, journal entry, and
+// outbox record together. Pin the adapter's failure behaviour: an error after
+// the first write must not leave any record behind for a later retry to
+// mistake as a committed transition.
+func TestRunReadwriteTransaction_RollsBackAllWrittenFilesOnWorkerFailure(t *testing.T) {
+	ctx := context.Background()
+	db, root := setupSingleRecordDB(t)
+
+	err := db.RunReadwriteTransaction(ctx, func(_ context.Context, tx dal.ReadwriteTransaction) error {
+		if err := tx.Set(ctx, franceRecord()); err != nil {
+			return err
+		}
+		germany := record.NewRecordWithData(
+			record.NewKeyWithID("countries", "germany"),
+			map[string]any{"name": "Germany", "population": 83000000},
+		)
+		if err := tx.Set(ctx, germany); err != nil {
+			return err
+		}
+		return errors.New("inject worker failure")
+	})
+	if err == nil || err.Error() != "inject worker failure" {
+		t.Fatalf("RunReadwriteTransaction error = %v, want injected worker failure", err)
+	}
+
+	for _, key := range []string{"france", "germany"} {
+		path := filepath.Join(root, "countries", "$records", key+".yaml")
+		if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+			t.Errorf("%s exists after rollback: stat error = %v", key, statErr)
+		}
 	}
 }
