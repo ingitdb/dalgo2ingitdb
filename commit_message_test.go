@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/record"
@@ -300,5 +301,63 @@ func TestRunReadwriteTransaction_CommitFailureRestoresWorktreeAndIndex(t *testin
 	}
 	if population := got.Data().(map[string]any)["population"]; population != 67000000 {
 		t.Fatalf("failed commit left changed record population = %v, want 67000000", population)
+	}
+}
+
+// TestRunReadwriteTransaction_GlobalLockKeepsReadersFromMixedState holds a
+// multi-record write open after its first mutation. A DB-level reader must
+// remain blocked, then observe both records after the transaction releases.
+func TestRunReadwriteTransaction_GlobalLockKeepsReadersFromMixedState(t *testing.T) {
+	ctx := context.Background()
+	db, root := setupSingleRecordDB(t)
+	gitInit(t, root)
+	seed := func(id string, population int) error {
+		return db.RunReadwriteTransaction(ctx, func(_ context.Context, tx dal.ReadwriteTransaction) error {
+			return tx.Set(ctx, record.NewRecordWithData(record.NewKeyWithID("countries", id), map[string]any{"name": id, "population": population}))
+		})
+	}
+	if err := seed("france", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := seed("germany", 1); err != nil {
+		t.Fatal(err)
+	}
+	firstWritten := make(chan struct{})
+	release := make(chan struct{})
+	writerDone := make(chan error, 1)
+	go func() {
+		writerDone <- db.RunReadwriteTransaction(ctx, func(_ context.Context, tx dal.ReadwriteTransaction) error {
+			if err := tx.Set(ctx, record.NewRecordWithData(record.NewKeyWithID("countries", "france"), map[string]any{"name": "france", "population": 2})); err != nil {
+				return err
+			}
+			close(firstWritten)
+			<-release
+			return tx.Set(ctx, record.NewRecordWithData(record.NewKeyWithID("countries", "germany"), map[string]any{"name": "germany", "population": 2}))
+		})
+	}()
+	<-firstWritten
+	readerDone := make(chan error, 1)
+	france := record.NewRecordWithData(record.NewKeyWithID("countries", "france"), map[string]any{})
+	germany := record.NewRecordWithData(record.NewKeyWithID("countries", "germany"), map[string]any{})
+	go func() { readerDone <- db.GetMulti(ctx, []record.Record{france, germany}) }()
+	select {
+	case err := <-readerDone:
+		t.Fatalf("reader observed transaction before it completed: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	if err := <-writerDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-readerDone; err != nil {
+		t.Fatal(err)
+	}
+	for _, got := range []record.Record{france, germany} {
+		if population := got.Data().(map[string]any)["population"]; population != 2 {
+			t.Fatalf("reader population = %v, want complete post-transaction state", population)
+		}
+	}
+	if status := git(t, root, "status", "--short"); strings.Contains(status, ".dalgo2ingitdb.transaction.lock") {
+		t.Fatalf("transaction lock polluted worktree status: %s", status)
 	}
 }

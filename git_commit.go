@@ -86,7 +86,10 @@ func gitCommitPaths(ctx context.Context, repoDir string, paths []string, message
 		return cmd.CombinedOutput()
 	}
 
-	oldHead, hasHead := gitHead(ctx, repoDir)
+	oldHead, hasHead, err := gitHead(ctx, repoDir)
+	if err != nil {
+		return err
+	}
 	if hasHead {
 		if out, err := run("read-tree", oldHead); err != nil {
 			return fmt.Errorf("dalgo2ingitdb: seed temporary index: %w: %s", err, out)
@@ -128,12 +131,19 @@ func gitCommitPaths(ctx context.Context, repoDir string, paths []string, message
 
 // gitHead returns the current commit ID. An unborn branch has no HEAD commit
 // and is a supported starting point for the first transaction commit.
-func gitHead(ctx context.Context, repoDir string) (string, bool) {
-	out, err := exec.CommandContext(ctx, "git", "-C", repoDir, "rev-parse", "--verify", "HEAD^{commit}").Output()
-	if err != nil {
-		return "", false
+func gitHead(ctx context.Context, repoDir string) (string, bool, error) {
+	out, err := exec.CommandContext(ctx, "git", "-C", repoDir, "rev-parse", "--verify", "HEAD^{commit}").CombinedOutput()
+	if err == nil {
+		return strings.TrimSpace(string(out)), true, nil
 	}
-	return strings.TrimSpace(string(out)), true
+	if ctx.Err() != nil {
+		return "", false, fmt.Errorf("dalgo2ingitdb: resolve Git HEAD: %w", ctx.Err())
+	}
+	message := string(out)
+	if strings.Contains(message, "Needed a single revision") || strings.Contains(message, "unknown revision or path not in the working tree") {
+		return "", false, nil
+	}
+	return "", false, fmt.Errorf("dalgo2ingitdb: resolve Git HEAD: %w: %s", err, out)
 }
 
 // isInsideGitWorkTree reports whether dir is inside a git work tree.

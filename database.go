@@ -2,10 +2,13 @@ package dalgo2ingitdb
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/dalgo/ddl"
@@ -112,12 +115,14 @@ func (db *Database) loadDefinition() (*ingitdb.Definition, error) {
 // start of the transaction; subsequent on-disk schema changes are not
 // observed within the transaction.
 func (db *Database) RunReadonlyTransaction(ctx context.Context, f dal.ROTxWorker, options ...dal.TransactionOption) error {
-	def, err := db.loadDefinition()
-	if err != nil {
-		return err
-	}
-	opts := dal.NewTransactionOptions(options...)
-	return f(ctx, readonlyTx{db: db, def: def, opts: opts})
+	return db.withTransactionReadLock(ctx, func() error {
+		def, err := db.loadDefinition()
+		if err != nil {
+			return err
+		}
+		opts := dal.NewTransactionOptions(options...)
+		return f(ctx, readonlyTx{db: db, def: def, opts: opts})
+	})
 }
 
 // RunReadwriteTransaction loads the project Definition and invokes the
@@ -132,10 +137,51 @@ func (db *Database) RunReadwriteTransaction(ctx context.Context, f dal.RWTxWorke
 	// optional Git ref update. It serialises cooperating Database writers for
 	// the complete transaction; Git/editor processes that ignore advisory locks
 	// remain outside this adapter's explicit single-writer contract.
-	lockPath := filepath.Join(db.projectPath, ".dalgo2ingitdb.transaction.lock")
+	lockPath, err := transactionLockPath(ctx, db.projectPath)
+	if err != nil {
+		return err
+	}
 	return withExclusiveLock(lockPath, func() error {
 		return db.runReadwriteTransaction(ctx, f, options...)
 	})
+}
+
+func (db *Database) withTransactionReadLock(ctx context.Context, fn func() error) error {
+	lockPath, err := transactionLockPath(ctx, db.projectPath)
+	if err != nil {
+		return err
+	}
+	return withSharedLock(lockPath, fn)
+}
+
+// transactionLockPath deliberately keeps the transaction lock out of the
+// project worktree. Git gives each linked worktree a private git-dir, while a
+// non-Git project uses a deterministic cache path keyed by its absolute root.
+func transactionLockPath(ctx context.Context, projectPath string) (string, error) {
+	if out, err := exec.CommandContext(ctx, "git", "-C", projectPath, "rev-parse", "--git-path", "dalgo2ingitdb/transaction.lock").Output(); err == nil {
+		path := filepath.Clean(strings.TrimSpace(string(out)))
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(projectPath, path)
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return "", fmt.Errorf("dalgo2ingitdb: create Git transaction lock directory: %w", err)
+		}
+		return path, nil
+	}
+	abs, err := filepath.Abs(projectPath)
+	if err != nil {
+		return "", fmt.Errorf("dalgo2ingitdb: resolve project path for transaction lock: %w", err)
+	}
+	cacheDir, err := os.UserCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("dalgo2ingitdb: resolve cache transaction lock directory: %w", err)
+	}
+	hash := sha256.Sum256([]byte(abs))
+	path := filepath.Join(cacheDir, "dalgo2ingitdb", "locks", fmt.Sprintf("%x.lock", hash[:]))
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", fmt.Errorf("dalgo2ingitdb: create cached transaction lock directory: %w", err)
+	}
+	return path, nil
 }
 
 func (db *Database) runReadwriteTransaction(ctx context.Context, f dal.RWTxWorker, options ...dal.TransactionOption) error {
@@ -166,40 +212,54 @@ func (db *Database) runReadwriteTransaction(ctx context.Context, f dal.RWTxWorke
 
 // Get loads a single record. See readonlyTx.Get for semantics.
 func (db *Database) Get(ctx context.Context, record dalrecord.Record) error {
-	def, err := db.loadDefinition()
-	if err != nil {
-		return err
-	}
-	return readonlyTx{db: db, def: def}.Get(ctx, record)
+	return db.withTransactionReadLock(ctx, func() error {
+		def, err := db.loadDefinition()
+		if err != nil {
+			return err
+		}
+		return readonlyTx{db: db, def: def}.Get(ctx, record)
+	})
 }
 
 // Exists reports whether the record identified by key exists on disk.
 func (db *Database) Exists(ctx context.Context, key *dalrecord.Key) (bool, error) {
-	def, err := db.loadDefinition()
-	if err != nil {
-		return false, err
-	}
-	return readonlyTx{db: db, def: def}.Exists(ctx, key)
+	var exists bool
+	err := db.withTransactionReadLock(ctx, func() error {
+		def, err := db.loadDefinition()
+		if err != nil {
+			return err
+		}
+		exists, err = readonlyTx{db: db, def: def}.Exists(ctx, key)
+		return err
+	})
+	return exists, err
 }
 
 // GetMulti loads multiple records.
 func (db *Database) GetMulti(ctx context.Context, records []dalrecord.Record) error {
-	def, err := db.loadDefinition()
-	if err != nil {
-		return err
-	}
-	return readonlyTx{db: db, def: def}.GetMulti(ctx, records)
+	return db.withTransactionReadLock(ctx, func() error {
+		def, err := db.loadDefinition()
+		if err != nil {
+			return err
+		}
+		return readonlyTx{db: db, def: def}.GetMulti(ctx, records)
+	})
 }
 
 // ExecuteQueryToRecordsReader runs a structured query against a single
 // collection. See readonlyTx.ExecuteQueryToRecordsReader for supported
 // query features.
 func (db *Database) ExecuteQueryToRecordsReader(ctx context.Context, query dal.Query) (dal.RecordsReader, error) {
-	def, err := db.loadDefinition()
-	if err != nil {
-		return nil, err
-	}
-	return readonlyTx{db: db, def: def}.ExecuteQueryToRecordsReader(ctx, query)
+	var reader dal.RecordsReader
+	err := db.withTransactionReadLock(ctx, func() error {
+		def, err := db.loadDefinition()
+		if err != nil {
+			return err
+		}
+		reader, err = readonlyTx{db: db, def: def}.ExecuteQueryToRecordsReader(ctx, query)
+		return err
+	})
+	return reader, err
 }
 
 // ExecuteQueryToRecordsetReader is not implemented yet; callers should
