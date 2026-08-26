@@ -18,7 +18,17 @@ import (
 
 // ErrRecordAlreadyExists is returned (wrapped) by Insert when a record with
 // the same key already exists. Callers detect it with errors.Is.
-var ErrRecordAlreadyExists = errors.New("record already exists")
+//
+// This is now an alias of the cross-adapter dalgo sentinel
+// dalrecord2.ErrRecordExists (dal-go/record v0.1.3+), rather than a
+// package-local error: dalgo's dalgotest conformance suite requires
+// Insert-over-existing to satisfy record.IsAlreadyExists, and every adapter
+// inventing its own duplicate-key error was exactly the fragmentation that
+// sentinel exists to remove. Existing callers that match on
+// errors.Is(err, ErrRecordAlreadyExists) keep working unchanged: the value
+// this variable holds is unchanged in identity from their point of view,
+// it's just no longer a distinct error.
+var ErrRecordAlreadyExists = dalrecord2.ErrRecordExists
 
 // readwriteTx is the read-write transaction handle. It embeds readonlyTx
 // to inherit Get / Exists / GetMulti / query support; write methods are
