@@ -36,7 +36,10 @@ func (r readonlyTx) Options() dal.TransactionOptions { return r.opts }
 // supported. A missing record sets record.ErrRecordNotFound on the record AND
 // returns it, per the dalgo Getter contract (dalgo end-to-end singleGetTest
 // checks dal.IsNotFound on the returned error).
-func (r readonlyTx) Get(_ context.Context, record dalrecord2.Record) error {
+func (r readonlyTx) Get(ctx context.Context, record dalrecord2.Record) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	colDef, recordKey, err := r.resolveCollection(record.Key())
 	if err != nil {
 		if errors.Is(err, errCollectionNotInDefinition) {
@@ -61,7 +64,7 @@ func (r readonlyTx) Get(_ context.Context, record dalrecord2.Record) error {
 		}
 		record.SetError(nil)
 		normalized := ingitdb.ApplyLocaleToRead(data, colDef.Columns)
-		computed, computeErr := ApplyFormulasToRead(normalized, colDef.Columns, colDef.ID, recordKey)
+		computed, computeErr := r.applyDerivedValues(normalized, colDef, recordKey)
 		if computeErr != nil {
 			record.SetError(computeErr)
 			return computeErr
@@ -84,7 +87,7 @@ func (r readonlyTx) Get(_ context.Context, record dalrecord2.Record) error {
 		}
 		record.SetError(nil)
 		normalized := ingitdb.ApplyLocaleToRead(recordData, colDef.Columns)
-		computed, computeErr := ApplyFormulasToRead(normalized, colDef.Columns, colDef.ID, recordKey)
+		computed, computeErr := r.applyDerivedValues(normalized, colDef, recordKey)
 		if computeErr != nil {
 			record.SetError(computeErr)
 			return computeErr
@@ -97,6 +100,13 @@ func (r readonlyTx) Get(_ context.Context, record dalrecord2.Record) error {
 	default:
 		return fmt.Errorf("dalgo2ingitdb: Get not implemented for record type %q", colDef.RecordFile.RecordType)
 	}
+}
+
+func (r readonlyTx) applyDerivedValues(data map[string]any, colDef *ingitdb.CollectionDef, recordKey string) (map[string]any, error) {
+	if r.db != nil && r.db.storedOnlyReads {
+		return data, nil
+	}
+	return ApplyFormulasToRead(data, colDef.Columns, colDef.ID, recordKey)
 }
 
 // Exists reports whether the record identified by key is present on disk.
@@ -132,6 +142,9 @@ func (r readonlyTx) Exists(_ context.Context, key *dalrecord2.Key) (bool, error)
 // the convention used by dal's reference drivers.
 func (r readonlyTx) GetMulti(ctx context.Context, records []dalrecord2.Record) error {
 	for _, rec := range records {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		// Per-record not-found is reported via record.SetError (set inside Get),
 		// not as a batch-level error — matching the dalgo GetMulti contract
 		// (dalgo end-to-end suite). Only genuine errors abort the batch.
@@ -168,6 +181,9 @@ func (r readonlyTx) ExecuteQueryToRecordsetReader(_ context.Context, query dal.Q
 	stored, err := readAllStoredRecords(colDef)
 	if err != nil {
 		return nil, err
+	}
+	if r.db != nil && r.db.storedOnlyReads {
+		return NewRecordsetReader(buildStoredOnlyRecordset(colDef, stored)), nil
 	}
 	return NewRecordsetReader(BuildRecordset(colDef, stored)), nil
 }

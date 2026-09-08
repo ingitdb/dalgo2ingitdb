@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/dal-go/dalgo/access"
@@ -170,6 +171,159 @@ func TestNewDatabase_AccessManifestFailsClosed(t *testing.T) {
 				t.Fatalf("NewDatabase = (%v, %v), want nil, error", db, err)
 			}
 		})
+	}
+}
+
+func TestOwnerPolicy_HidesDerivedColumnsAcrossReadPaths(t *testing.T) {
+	_, root := setupFormulaDB(t)
+	writePersonRecord(t, root, "ada", "first_name: Ada\nlast_name: Lovelace\nqty: 12\ndivisor: 4\n")
+	writeOwnerPolicy(t, root, "people", "first_name", "last_name", "qty", "divisor", "full_name", "safe_ratio")
+	db, err := dalgo2ingitdb.NewDatabase(root, validator.NewCollectionsReader())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertStoredOnly := func(t *testing.T, rec record.Record) {
+		t.Helper()
+		data := rec.Data().(map[string]any)
+		if data["first_name"] != "Ada" {
+			t.Fatalf("stored field missing: %#v", data)
+		}
+		if data["full_name"] != nil || data["safe_ratio"] != nil {
+			t.Fatalf("computed field leaked: %#v", data)
+		}
+	}
+	readPoint := func(ctx context.Context, session dal.ReadSession) {
+		rec := record.NewRecordWithData(record.NewKeyWithID("people", "ada"), map[string]any{})
+		if err := session.Get(ctx, rec); err != nil {
+			t.Fatal(err)
+		}
+		assertStoredOnly(t, rec)
+	}
+	readQuery := func(ctx context.Context, session dal.ReadSession) {
+		q := dal.NewQueryBuilder(dal.From(dal.NewRootCollectionRef("people", ""))).SelectKeysOnly(reflect.String)
+		r, err := session.ExecuteQueryToRecordsReader(ctx, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec, err := r.Next()
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertStoredOnly(t, rec)
+	}
+	readPoint(context.Background(), db)
+	readQuery(context.Background(), db)
+	if err := db.RunReadonlyTransaction(context.Background(), func(ctx context.Context, tx dal.ReadTransaction) error {
+		readPoint(ctx, tx)
+		readQuery(ctx, tx)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWithStoredOnlyReads_ProtectsOuterPolicyWithoutOwnerManifest(t *testing.T) {
+	legacy, root := setupFormulaDB(t)
+	writePersonRecord(t, root, "ada", "first_name: Ada\nlast_name: Lovelace\nqty: 12\ndivisor: 4\n")
+	legacyRecord := record.NewRecordWithData(record.NewKeyWithID("people", "ada"), map[string]any{})
+	if err := legacy.Get(context.Background(), legacyRecord); err != nil {
+		t.Fatal(err)
+	}
+	if legacyRecord.Data().(map[string]any)["full_name"] != "Ada Lovelace" {
+		t.Fatal("standalone legacy read lost computed columns")
+	}
+
+	db, err := dalgo2ingitdb.NewDatabase(root, validator.NewCollectionsReader(), dalgo2ingitdb.WithStoredOnlyReads())
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(session dal.ReadSession) {
+		rec := record.NewRecordWithData(record.NewKeyWithID("people", "ada"), map[string]any{})
+		if err := session.Get(context.Background(), rec); err != nil {
+			t.Fatal(err)
+		}
+		data := rec.Data().(map[string]any)
+		if data["first_name"] != "Ada" || data["full_name"] != nil {
+			t.Fatalf("stored-only point read = %#v", data)
+		}
+		q := dal.NewQueryBuilder(dal.From(dal.NewRootCollectionRef("people", ""))).SelectKeysOnly(reflect.String)
+		r, err := session.ExecuteQueryToRecordsReader(context.Background(), q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, err := r.Next()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := row.Data().(map[string]any); got["first_name"] != "Ada" || got["full_name"] != nil {
+			t.Fatalf("stored-only query = %#v", got)
+		}
+	}
+	check(db)
+	if err := db.RunReadonlyTransaction(context.Background(), func(_ context.Context, tx dal.ReadTransaction) error {
+		check(tx)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOwnerPolicy_ComputedForeignKeyDoesNotReadOrLeakParent(t *testing.T) {
+	_, root := setupComputedForeignKeyDB(t)
+	writeYAMLRecord(t, root, "things", "thing-1", "owner_input: 7\n")
+	// No users record exists. Protected reads must return the stored input
+	// without evaluating or dereferencing the computed foreign key.
+	writeOwnerPolicy(t, root, "things", "owner_input", "owner_key")
+	db, err := dalgo2ingitdb.NewDatabase(root, validator.NewCollectionsReader())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := record.NewRecordWithData(record.NewKeyWithID("things", "thing-1"), map[string]any{})
+	if err := db.Get(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+	data := rec.Data().(map[string]any)
+	if data["owner_input"] != 7 {
+		t.Fatalf("stored field = %#v", data)
+	}
+	if data["owner_key"] != nil {
+		t.Fatalf("computed foreign key leaked: %#v", data)
+	}
+}
+
+func TestOwnerPolicy_ReadsHonorCanceledContext(t *testing.T) {
+	_, root := setupFormulaDB(t)
+	writePersonRecord(t, root, "ada", "first_name: Ada\nlast_name: Lovelace\nqty: 12\ndivisor: 4\n")
+	writeOwnerPolicy(t, root, "people", "first_name")
+	db, err := dalgo2ingitdb.NewDatabase(root, validator.NewCollectionsReader())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	q := dal.NewQueryBuilder(dal.From(dal.NewRootCollectionRef("people", ""))).SelectKeysOnly(reflect.String)
+	if _, err := db.ExecuteQueryToRecordsReader(ctx, q); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled query = %v", err)
+	}
+	rec := record.NewRecordWithData(record.NewKeyWithID("people", "ada"), map[string]any{})
+	if err := db.Get(ctx, rec); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled get = %v", err)
+	}
+}
+
+func writeOwnerPolicy(t *testing.T, root, collection string, fields ...string) {
+	t.Helper()
+	dir := filepath.Join(root, ".ingitdb", "access")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "enabled: true\ndatabase: protected\npolicies: [owner.yaml]\n"
+	policy := "apiVersion: dtql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: owner}\ntarget: {database: protected}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes:\n  - path: /" + collection + "\n    rules:\n      - {id: query, effect: allow, operations: [query], fields: [" + strings.Join(fields, ", ") + "]}\n  - path: /" + collection + "/*\n    rules:\n      - {id: get, effect: allow, operations: [get], fields: [" + strings.Join(fields, ", ") + "]}\n"
+	if err := os.WriteFile(filepath.Join(dir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "owner.yaml"), []byte(policy), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 
