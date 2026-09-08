@@ -11,6 +11,7 @@ An owner can enable persisted read and write policies by creating
 ```yaml
 enabled: true
 database: my-database
+realm: example.com
 policies:
   - readers.yaml
 ```
@@ -20,6 +21,11 @@ Policy paths are relative to `.ingitdb/access` and use the portable
 loaded when `NewDatabase` opens the project. That immutable policy snapshot is
 used until the database is opened again; editing files does not change an
 already-open handle.
+
+`realm` is optional for compatibility with legacy untyped principals. When it
+is set, role, group, and user bindings match typed user principals in that
+realm. A service, application, or agent with the same ID does not inherit a
+human user binding.
 
 Projects without an `.ingitdb/access` directory retain legacy behavior. Once
 that directory exists, `manifest.yaml` is required and invalid configuration

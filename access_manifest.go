@@ -79,6 +79,7 @@ func readAccessManifest(projectPath string) (config access.FilePolicyConfig, pre
 	var document struct {
 		Enabled  *bool    `yaml:"enabled"`
 		Database string   `yaml:"database"`
+		Realm    string   `yaml:"realm"`
 		Policies []string `yaml:"policies"`
 	}
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
@@ -96,7 +97,7 @@ func readAccessManifest(projectPath string) (config access.FilePolicyConfig, pre
 	if document.Enabled == nil {
 		return config, true, errors.New("dalgo2ingitdb: access manifest requires explicit enabled")
 	}
-	config = access.FilePolicyConfig{Enabled: *document.Enabled, Database: document.Database, Policies: document.Policies}
+	config = access.FilePolicyConfig{Enabled: *document.Enabled, Database: document.Database, Realm: document.Realm, Policies: document.Policies}
 	if config.Enabled && len(config.Policies) == 0 {
 		return config, true, errors.New("dalgo2ingitdb: enabled access manifest requires at least one policy")
 	}

@@ -222,6 +222,66 @@ func TestOwnerPolicy_HidesDerivedColumnsAcrossReadPaths(t *testing.T) {
 	}
 }
 
+func TestOwnerPolicy_ConfiguredRealmUsesTypedHumanBindings(t *testing.T) {
+	_, root := setupSingleRecordDB(t)
+	writeYAMLRecord(t, root, "countries", "france", "name: France\npopulation: 67000000\n")
+	dir := filepath.Join(root, ".ingitdb", "access")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "enabled: true\ndatabase: world\nrealm: staff.example\npolicies: [people.yaml]\n"
+	policy := `apiVersion: dtql.org/access/v1
+kind: AccessPolicy
+metadata: {name: people}
+target: {database: world}
+composition: dalgo-hierarchical-v1
+default: deny
+ruleSets:
+  reader:
+    - path: /countries/*
+      rules:
+        - {id: read, effect: allow, operations: [get]}
+bindings:
+  roles: {reader: [reader]}
+  users: {alice: [reader]}
+`
+	if err := os.WriteFile(filepath.Join(dir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "people.yaml"), []byte(policy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	db, err := dalgo2ingitdb.NewDatabase(root, validator.NewCollectionsReader())
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(subject access.PrincipalRef, roles ...string) error {
+		principal, err := access.NewPrincipal(subject, roles, nil)
+		if err != nil {
+			return err
+		}
+		ctx := access.WithPrincipal(context.Background(), principal)
+		rec := record.NewRecordWithData(record.NewKeyWithID("countries", "france"), map[string]any{})
+		return db.Get(ctx, rec)
+	}
+	user := access.PrincipalRef{Realm: "staff.example", Kind: access.PrincipalKindUser, ID: "alice"}
+	if err := get(user); err != nil {
+		t.Fatalf("typed user binding: %v", err)
+	}
+	roleUser := access.PrincipalRef{Realm: "staff.example", Kind: access.PrincipalKindUser, ID: "bob"}
+	if err := get(roleUser, "reader"); err != nil {
+		t.Fatalf("typed role binding: %v", err)
+	}
+	wrongRealm := access.PrincipalRef{Realm: "other.example", Kind: access.PrincipalKindUser, ID: "alice"}
+	if err := get(wrongRealm, "reader"); !errors.Is(err, access.ErrAccessDenied) {
+		t.Fatalf("wrong realm = %v", err)
+	}
+	service := access.PrincipalRef{Realm: "staff.example", Kind: access.PrincipalKindService, ID: "alice"}
+	if err := get(service); !errors.Is(err, access.ErrAccessDenied) {
+		t.Fatalf("service inherited user binding: %v", err)
+	}
+}
+
 func TestWithStoredOnlyReads_ProtectsOuterPolicyWithoutOwnerManifest(t *testing.T) {
 	legacy, root := setupFormulaDB(t)
 	writePersonRecord(t, root, "ada", "first_name: Ada\nlast_name: Lovelace\nqty: 12\ndivisor: 4\n")
