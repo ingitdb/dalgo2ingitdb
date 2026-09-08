@@ -18,7 +18,10 @@ import (
 // executeQueryToRecordsReader reads every record in the collection
 // referenced by query.From(), applies WHERE / GROUP BY / HAVING / ORDER BY /
 // LIMIT / column projection in memory, and returns a slice-backed RecordsReader.
-func executeQueryToRecordsReader(_ context.Context, r readonlyTx, query dal.Query) (dal.RecordsReader, error) {
+func executeQueryToRecordsReader(ctx context.Context, r readonlyTx, query dal.Query) (dal.RecordsReader, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	colDef, err := collectionFromQuery(r.def, query)
 	if err != nil {
 		if errors.Is(err, errCollectionNotInDefinition) {
@@ -31,13 +34,31 @@ func executeQueryToRecordsReader(_ context.Context, r readonlyTx, query dal.Quer
 	// collectionFromQuery already validated that query is a StructuredQuery.
 	sq, _ := query.(dal.StructuredQuery)
 
-	records, err := readAllRecordsFromDisk(colDef)
+	var records []record.Record
+	if r.db != nil && r.db.storedOnlyReads {
+		stored, readErr := readAllStoredRecords(colDef)
+		if readErr != nil {
+			return nil, readErr
+		}
+		records = make([]record.Record, len(stored))
+		for i, item := range stored {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			records[i] = record.NewRecordWithData(record.NewKeyWithID(colDef.ID, item.Key), item.Stored).SetError(nil)
+		}
+	} else {
+		records, err = readAllRecordsFromDisk(colDef)
+	}
 	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
 	if cond := sq.Where(); cond != nil {
-		records, err = applyWhere(records, cond)
+		records, err = applyWhereContext(ctx, records, cond)
 		if err != nil {
 			return nil, err
 		}
@@ -45,7 +66,7 @@ func executeQueryToRecordsReader(_ context.Context, r readonlyTx, query dal.Quer
 
 	// GROUP BY path: partition, aggregate, HAVING, ORDER BY, LIMIT, project.
 	if groupBy := sq.GroupBy(); len(groupBy) > 0 {
-		return applyGroupBy(sq, records, colDef.ID)
+		return applyGroupByContext(ctx, sq, records, colDef.ID)
 	}
 
 	if orderBy := sq.OrderBy(); len(orderBy) > 0 {
@@ -57,7 +78,7 @@ func executeQueryToRecordsReader(_ context.Context, r readonlyTx, query dal.Quer
 
 	// Column projection (no GROUP BY).
 	if columns := sq.Columns(); len(columns) > 0 {
-		records, err = applyProjection(records, columns, colDef.ID)
+		records, err = applyProjectionContext(ctx, records, columns, colDef.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -70,6 +91,10 @@ func executeQueryToRecordsReader(_ context.Context, r readonlyTx, query dal.Quer
 // expressions, computes aggregate columns, applies HAVING, ORDER BY, LIMIT, and
 // returns projected group records.
 func applyGroupBy(sq dal.StructuredQuery, records []record.Record, collection string) (dal.RecordsReader, error) {
+	return applyGroupByContext(context.Background(), sq, records, collection)
+}
+
+func applyGroupByContext(ctx context.Context, sq dal.StructuredQuery, records []record.Record, collection string) (dal.RecordsReader, error) {
 	groupBy := sq.GroupBy()
 	columns := sq.Columns()
 
@@ -83,6 +108,9 @@ func applyGroupBy(sq dal.StructuredQuery, records []record.Record, collection st
 	byKey := make(map[string]*group)
 
 	for _, rec := range records {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		data := rec.Data().(map[string]any)
 		recKey := fmt.Sprintf("%v", rec.Key().ID)
 		gk, err := groupKeyStr(groupBy, data, recKey)
@@ -106,6 +134,9 @@ func applyGroupBy(sq dal.StructuredQuery, records []record.Record, collection st
 
 	// Project each group's selected columns.
 	for _, g := range groups {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		out := make(map[string]any, len(columns))
 		for _, col := range columns {
 			val, err := resolveGroupExpr(col.Expression, g.rows)
@@ -121,6 +152,9 @@ func applyGroupBy(sq dal.StructuredQuery, records []record.Record, collection st
 	if having := sq.Having(); having != nil {
 		kept := groups[:0]
 		for _, g := range groups {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			ok, err := matchesHavingCondition(having, g.out, g.rows)
 			if err != nil {
 				return nil, err
@@ -371,8 +405,15 @@ func resolveHavingExpr(e dal.Expression, out map[string]any, rows []map[string]a
 
 // applyProjection reduces each record's data map to only the selected columns.
 func applyProjection(records []record.Record, columns []dal.Column, collection string) ([]record.Record, error) {
+	return applyProjectionContext(context.Background(), records, columns, collection)
+}
+
+func applyProjectionContext(ctx context.Context, records []record.Record, columns []dal.Column, collection string) ([]record.Record, error) {
 	result := make([]record.Record, len(records))
 	for i, rec := range records {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		data := rec.Data().(map[string]any)
 		recKey := fmt.Sprintf("%v", rec.Key().ID)
 		out := make(map[string]any, len(columns))
@@ -599,8 +640,15 @@ func buildKeyExtractor(nameTemplate string) (func(relPath string) string, error)
 }
 
 func applyWhere(records []record.Record, cond dal.Condition) ([]record.Record, error) {
+	return applyWhereContext(context.Background(), records, cond)
+}
+
+func applyWhereContext(ctx context.Context, records []record.Record, cond dal.Condition) ([]record.Record, error) {
 	filtered := records[:0]
 	for _, rec := range records {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		data := rec.Data().(map[string]any)
 		recKey := fmt.Sprintf("%v", rec.Key().ID)
 		match, err := evaluateCondition(cond, data, recKey)

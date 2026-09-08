@@ -52,6 +52,25 @@ type Database struct {
 
 	projectPath string
 	reader      ingitdb.CollectionsReader
+	// storedOnlyReads keeps derived values out of the adapter's raw read
+	// result. The policy wrapper can authorize stored fields, but it cannot yet
+	// authorize every dependency used to derive a computed field.
+	storedOnlyReads bool
+}
+
+type databaseOptions struct {
+	storedOnlyReads bool
+}
+
+// DatabaseOption configures adapter behavior selected before the database is
+// exposed to callers.
+type DatabaseOption func(*databaseOptions)
+
+// WithStoredOnlyReads prevents evaluation and return of computed columns. It
+// is intended for callers that apply an access-policy wrapper above this
+// adapter and cannot authorize every dependency used by a derived value.
+func WithStoredOnlyReads() DatabaseOption {
+	return func(options *databaseOptions) { options.storedOnlyReads = true }
 }
 
 // NewDatabase constructs a Database rooted at projectPath. The reader is
@@ -59,7 +78,7 @@ type Database struct {
 // and inside DB-level record-access methods. Returns an error if
 // projectPath is empty or does not exist; the constructor does NOT load
 // any collection definitions.
-func NewDatabase(projectPath string, reader ingitdb.CollectionsReader) (dal.DB, error) {
+func NewDatabase(projectPath string, reader ingitdb.CollectionsReader, options ...DatabaseOption) (dal.DB, error) {
 	if projectPath == "" {
 		return nil, errors.New("dalgo2ingitdb: projectPath is required")
 	}
@@ -70,9 +89,17 @@ func NewDatabase(projectPath string, reader ingitdb.CollectionsReader) (dal.DB, 
 	if !info.IsDir() {
 		return nil, fmt.Errorf("dalgo2ingitdb: %s is not a directory", projectPath)
 	}
+	var settings databaseOptions
+	for i, option := range options {
+		if option == nil {
+			return nil, fmt.Errorf("dalgo2ingitdb: nil database option at index %d", i)
+		}
+		option(&settings)
+	}
 	backend := &Database{
-		projectPath: projectPath,
-		reader:      reader,
+		projectPath:     projectPath,
+		reader:          reader,
+		storedOnlyReads: settings.storedOnlyReads,
 	}
 	db := dal.NewDB(backend)
 	config, present, err := readAccessManifest(projectPath)
@@ -82,6 +109,7 @@ func NewDatabase(projectPath string, reader ingitdb.CollectionsReader) (dal.DB, 
 	if !present || !config.Enabled {
 		return db, nil
 	}
+	backend.storedOnlyReads = true
 	policies, err := access.LoadPolicyFiles(filepath.Join(projectPath, accessConfigDir), config)
 	if err != nil {
 		return nil, fmt.Errorf("dalgo2ingitdb: load access policies: %w", err)
