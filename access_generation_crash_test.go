@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"testing"
+	"time"
 
 	"github.com/dal-go/dalgo/access"
 	"github.com/dal-go/record"
@@ -209,5 +210,81 @@ func TestFacadePostCommitErrorInstallsAuthoritativeSnapshot(t *testing.T) {
 	rec := record.NewRecordWithData(record.NewKeyWithID("x", "one"), map[string]any{})
 	if err := db.Get(context.Background(), rec); !errors.Is(err, access.ErrAccessDenied) {
 		t.Fatalf("old permissive snapshot remained after known commit: %v", err)
+	}
+}
+
+func TestMountedReloadCannotReinstallRevokedGeneration(t *testing.T) {
+	root := t.TempDir()
+	runGitForGenerationTest(t, root, "init")
+	runGitForGenerationTest(t, root, "config", "user.name", "Test")
+	runGitForGenerationTest(t, root, "config", "user.email", "test@example.invalid")
+	runGitForGenerationTest(t, root, "commit", "--allow-empty", "-m", "initial")
+	controller, _ := NewOwnerPolicyController(root)
+	document := func(effect string) OwnerPolicyDocument {
+		return OwnerPolicyDocument{YAML: []byte("apiVersion: dtql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: p}\ntarget: {database: world}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes: [{path: /x/one, rules: [{id: r, effect: " + effect + ", operations: [get]}]}]\n")}
+	}
+	initial, err := controller.Publish(context.Background(), OwnerPolicyGeneration{Enabled: true, Database: "world", Policies: []OwnerPolicyDocument{document("allow")}}, "", "initial")
+	if err != nil {
+		t.Fatal(err)
+	}
+	facade, err := NewDatabase(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := facade.(*securedDatabase)
+	captured := make(chan struct{})
+	release := make(chan struct{})
+	reloadDone := make(chan error, 1)
+	publishDone := make(chan error, 1)
+	ownerPolicyPublicationHook = func(phase string) error {
+		if phase == "reload_before_activation" {
+			close(captured)
+			<-release
+		}
+		return nil
+	}
+	defer func() { ownerPolicyPublicationHook = func(string) error { return nil } }()
+	go func() { _, err := db.ReloadOwnerPolicies(context.Background()); reloadDone <- err }()
+	<-captured
+	// The stale allowing snapshot has been read but not installed. Activation
+	// must still be held here, after the controller's filesystem lock is gone.
+	if db.ownerActivation.TryLock() {
+		db.ownerActivation.Unlock()
+		close(release)
+		<-reloadDone
+		t.Fatal("reload released activation serialization before installing its snapshot")
+	}
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		_, err := db.PublishOwnerPolicyGeneration(context.Background(), OwnerPolicyGeneration{Enabled: true, Database: "world", Policies: []OwnerPolicyDocument{document("deny")}}, initial.Revision, "revoke")
+		publishDone <- err
+	}()
+	<-started
+	close(release)
+	for _, done := range []<-chan error{reloadDone, publishDone} {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("management calls deadlocked")
+		}
+	}
+	snapshot, err := db.OwnerPolicySnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	authoritative, err := controller.Reload(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Revision != authoritative.Revision || snapshot.Revision == initial.Revision {
+		t.Fatal("stale reload undid committed revocation")
+	}
+	rec := record.NewRecordWithData(record.NewKeyWithID("x", "one"), map[string]any{})
+	if err := db.Get(context.Background(), rec); !errors.Is(err, access.ErrAccessDenied) {
+		t.Fatalf("post-publication read used revoked permission: %v", err)
 	}
 }

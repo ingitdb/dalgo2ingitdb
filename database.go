@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/dal-go/dalgo/access"
@@ -170,9 +171,15 @@ type securedDatabase struct {
 	controller *OwnerPolicyController
 	ownerState *atomic.Pointer[OwnerPolicySnapshot]
 	backend    *Database
+	// Serializes mounted management calls through snapshot installation, not
+	// merely the controller's filesystem transaction. A stale reload must not
+	// replace a newer successfully activated revocation.
+	ownerActivation sync.Mutex
 }
 
 func (db *securedDatabase) ReloadOwnerPolicies(ctx context.Context) (string, error) {
+	db.ownerActivation.Lock()
+	defer db.ownerActivation.Unlock()
 	if db.controller == nil || db.ownerState == nil {
 		return "", errors.New("dalgo2ingitdb: owner policy generations are not enabled")
 	}
@@ -182,11 +189,16 @@ func (db *securedDatabase) ReloadOwnerPolicies(ctx context.Context) (string, err
 		db.ownerState.Store(nil)
 		return "", err
 	}
+	if err := ownerPolicyPublicationHook("reload_before_activation"); err != nil {
+		return "", err
+	}
 	db.ownerState.Store(&snapshot)
 	return snapshot.Revision, nil
 }
 
 func (db *securedDatabase) PublishOwnerPolicyGeneration(ctx context.Context, candidate OwnerPolicyGeneration, expectedRevision, message string) (OwnerPolicyPublication, error) {
+	db.ownerActivation.Lock()
+	defer db.ownerActivation.Unlock()
 	if db.controller == nil || db.ownerState == nil {
 		return OwnerPolicyPublication{}, errors.New("dalgo2ingitdb: owner policy generations are not enabled")
 	}

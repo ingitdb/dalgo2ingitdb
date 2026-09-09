@@ -2,6 +2,8 @@ package dalgo2ingitdb
 
 import (
 	"context"
+	"github.com/dal-go/record/update"
+	"reflect"
 	"testing"
 
 	"github.com/dal-go/dalgo/access"
@@ -74,5 +76,46 @@ func TestProtectedMapSiblingChangeInvalidatesRevision(t *testing.T) {
 	}
 	if before[0].DataRevision == after[0].DataRevision {
 		t.Fatal("sibling-only hidden change did not invalidate whole-file revision")
+	}
+}
+
+func TestProtectedMapNestedCandidatesDoNotMutateEvidence(t *testing.T) {
+	tx, _, _ := makeMapOfRecordsRWTx(t)
+	ctx := context.Background()
+	key := record.NewKeyWithID("scores", "victim")
+	original := map[string]any{"score": 1, "meta": map[string]any{"ownerID": "victim", "hidden": "keep"}, "items": []any{map[string]any{"value": "original"}}}
+	if err := tx.Set(ctx, record.NewRecordWithData(key, original)); err != nil {
+		t.Fatal(err)
+	}
+	storage := &protectedStorage{db: tx.db, secret: []byte("01234567890123456789012345678901")}
+	for _, changes := range [][]update.Update{
+		{update.ByFieldName("meta.ownerID", "attacker")},
+		{update.ByFieldName("meta.ownerID", update.DeleteField)},
+		{update.ByFieldName("meta", map[string]any{"ownerID": "attacker"})},
+	} {
+		op, err := access.NewProtectedUpdate("nested", key, changes, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		evidence, candidates, err := storage.prepare(ctx, tx.readonlyTx, []access.ProtectedOperation{op})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if evidence[0].PreImage["meta"].(map[string]any)["ownerID"] != "victim" {
+			t.Fatal("candidate rewrote authorization pre-image")
+		}
+		copy := cloneEvidence(evidence)
+		copy[0].PreImage["items"].([]any)[0].(map[string]any)["value"] = "changed"
+		candidates[0]["meta"].(map[string]any)["hidden"] = "changed"
+		if evidence[0].PreImage["items"].([]any)[0].(map[string]any)["value"] != "original" || evidence[0].PreImage["meta"].(map[string]any)["hidden"] != "keep" {
+			t.Fatal("evidence shares mutable descendants")
+		}
+		stored := record.NewRecordWithData(key, map[string]any{})
+		if err := tx.Get(ctx, stored); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(stored.Data().(map[string]any)["meta"], original["meta"]) {
+			t.Fatal("preparation changed backing map record")
+		}
 	}
 }
