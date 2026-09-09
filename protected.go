@@ -314,6 +314,8 @@ func (s *protectedStorage) prepare(ctx context.Context, ro readonlyTx, ops []acc
 	}
 	evidence := make([]access.ProtectedEvidence, len(ops))
 	candidates := make([]map[string]any, len(ops))
+	cols := make([]*ingitdb.CollectionDef, len(ops))
+	keys := make([]string, len(ops))
 	for i, op := range ops {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
@@ -331,6 +333,7 @@ func (s *protectedStorage) prepare(ctx context.Context, ro readonlyTx, ops []acc
 			}
 		}
 		path := resolveRecordPath(col, key)
+		cols[i], keys[i] = col, key
 		raw, rawErr := os.ReadFile(path)
 		if rawErr != nil && !os.IsNotExist(rawErr) {
 			return nil, nil, rawErr
@@ -378,15 +381,62 @@ func (s *protectedStorage) prepare(ctx context.Context, ro readonlyTx, ops []acc
 			candidate = nil
 		}
 		revision := s.revision(op.CanonicalTarget(), exists, raw)
-		candidateRaw, candidateExists, err := protectedCandidateBytes(col, key, op.Action(), candidate)
-		if err != nil {
-			return nil, nil, err
-		}
-		candidateRevision := s.revision(op.CanonicalTarget(), candidateExists, candidateRaw)
-		evidence[i] = access.ProtectedEvidence{OperationID: op.ID(), CanonicalTarget: op.CanonicalTarget(), SnapshotToken: revision, Exists: exists, PreImage: cloneMap(pre), CandidateImage: cloneMap(candidate), DataRevision: revision, CandidateRevision: candidateRevision, Complete: true}
+		evidence[i] = access.ProtectedEvidence{OperationID: op.ID(), CanonicalTarget: op.CanonicalTarget(), SnapshotToken: revision, Exists: exists, PreImage: cloneMap(pre), CandidateImage: cloneMap(candidate), DataRevision: revision, Complete: true}
 		candidates[i] = candidate
 	}
+	if err := s.assignBatchCandidateRevisions(ops, cols, keys, candidates, evidence); err != nil {
+		return nil, nil, err
+	}
 	return evidence, candidates, nil
+}
+
+func (s *protectedStorage) assignBatchCandidateRevisions(ops []access.ProtectedOperation, cols []*ingitdb.CollectionDef, keys []string, candidates []map[string]any, evidence []access.ProtectedEvidence) error {
+	byPath := map[string][]int{}
+	for i, col := range cols {
+		byPath[resolveRecordPath(col, keys[i])] = append(byPath[resolveRecordPath(col, keys[i])], i)
+	}
+	for path, indexes := range byPath {
+		first := indexes[0]
+		col := cols[first]
+		var raw []byte
+		var exists bool
+		var err error
+		switch col.RecordFile.RecordType {
+		case ingitdb.SingleRecord:
+			i := first
+			if ops[i].Action() != access.Delete && candidates[i] != nil {
+				raw, err = ingitdb.EncodeRecordContentForCollection(candidates[i], col)
+				exists = true
+			}
+		case ingitdb.MapOfRecords:
+			all, readErr := readMapOfRecordsFile(path, col.RecordFile.Format)
+			if readErr != nil {
+				return readErr
+			}
+			if all == nil {
+				all = map[string]map[string]any{}
+			}
+			for _, i := range indexes {
+				switch {
+				case ops[i].Action() == access.Delete:
+					delete(all, keys[i])
+				case candidates[i] != nil:
+					all[keys[i]] = ingitdb.ApplyLocaleToWrite(candidates[i], col.Columns)
+				}
+			}
+			raw, err = ingitdb.EncodeMapOfRecordsContent(all, col.RecordFile.Format, col.ID, col.ColumnsOrder)
+			exists = true
+		default:
+			return fmt.Errorf("dalgo2ingitdb: protected record type %q unsupported", col.RecordFile.RecordType)
+		}
+		if err != nil {
+			return err
+		}
+		for _, i := range indexes {
+			evidence[i].CandidateRevision = s.revision(ops[i].CanonicalTarget(), exists, raw)
+		}
+	}
+	return nil
 }
 
 func validateProtectedDefinition(def *ingitdb.Definition) error {
@@ -427,38 +477,6 @@ func (db *Database) validateProtectedCandidate(ctx context.Context, op access.Pr
 		return ValidateDelete(def, op.Key().Collection(), key)
 	}
 	return ValidateWrite(def, fmt.Sprint(op.Action()), op.Key().Collection(), col, key, candidate)
-}
-
-func protectedCandidateBytes(col *ingitdb.CollectionDef, key string, action access.Operations, candidate map[string]any) ([]byte, bool, error) {
-	if action != access.Delete && candidate == nil {
-		return nil, false, nil
-	}
-	switch col.RecordFile.RecordType {
-	case ingitdb.SingleRecord:
-		if action == access.Delete {
-			return nil, false, nil
-		}
-		content, err := ingitdb.EncodeRecordContentForCollection(candidate, col)
-		return content, true, err
-	case ingitdb.MapOfRecords:
-		path := resolveRecordPath(col, key)
-		all, err := readMapOfRecordsFile(path, col.RecordFile.Format)
-		if err != nil {
-			return nil, false, err
-		}
-		if all == nil {
-			all = map[string]map[string]any{}
-		}
-		if action == access.Delete {
-			delete(all, key)
-		} else {
-			all[key] = ingitdb.ApplyLocaleToWrite(candidate, col.Columns)
-		}
-		content, err := ingitdb.EncodeMapOfRecordsContent(all, col.RecordFile.Format, col.ID, col.ColumnsOrder)
-		return content, true, err
-	default:
-		return nil, false, fmt.Errorf("dalgo2ingitdb: protected record type %q unsupported", col.RecordFile.RecordType)
-	}
 }
 
 func (s *protectedStorage) revision(target string, exists bool, raw []byte) string {
