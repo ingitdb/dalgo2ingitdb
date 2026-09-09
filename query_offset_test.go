@@ -2,6 +2,7 @@ package dalgo2ingitdb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"testing"
@@ -46,5 +47,15 @@ func TestQueryOffsetAfterFilteringBeforeLimit(t *testing.T) {
 		if !reflect.DeepEqual(got, tc.want) {
 			t.Fatalf("offset %d: got %v, want %v", tc.offset, got, tc.want)
 		}
+	}
+}
+
+func TestProtectedQueryRejectsUnresolvedPredicateOnEmptyCollection(t *testing.T) {
+	tx, _, _ := makeMapOfRecordsRWTx(t)
+	tx.readonlyTx.db = &Database{storedOnlyReads: true}
+	query := dal.From(dal.NewRootCollectionRef("scores", "")).NewQuery().
+		WhereField("score", dal.Equal, dal.NewParam("unresolved")).SelectKeysOnly(reflect.String)
+	if _, err := executeQueryToRecordsReader(context.Background(), tx.readonlyTx, query); !errors.Is(err, dal.ErrNotSupported) {
+		t.Fatalf("unresolved predicate on empty collection must fail closed: %v", err)
 	}
 }
