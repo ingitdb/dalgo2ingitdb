@@ -81,6 +81,21 @@ scopes:
 		return db
 	}
 	db := open()
+	provider, ok := db.(interface {
+		AccessPolicies(context.Context) ([]access.Policy, error)
+	})
+	if !ok {
+		t.Fatal("secured database lost trusted policy snapshot")
+	}
+	snapshotPolicies, err := provider.AccessPolicies(context.Background())
+	if err != nil || len(snapshotPolicies) != 1 {
+		t.Fatalf("AccessPolicies = %d, %v", len(snapshotPolicies), err)
+	}
+	snapshotPolicies[0] = nil
+	again, _ := provider.AccessPolicies(context.Background())
+	if len(again) != 1 || again[0] == nil {
+		t.Fatal("AccessPolicies returned mutable backing slice")
+	}
 	if _, ok := dal.As[dbschema.SchemaReader](db); !ok {
 		t.Error("secured database lost schema reader")
 	}

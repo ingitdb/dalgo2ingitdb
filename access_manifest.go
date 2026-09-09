@@ -77,10 +77,11 @@ func readAccessManifest(projectPath string) (config access.FilePolicyConfig, pre
 		return config, true, fmt.Errorf("dalgo2ingitdb: access manifest exceeds %d bytes", maxAccessManifestSize)
 	}
 	var document struct {
-		Enabled  *bool    `yaml:"enabled"`
-		Database string   `yaml:"database"`
-		Realm    string   `yaml:"realm"`
-		Policies []string `yaml:"policies"`
+		Enabled    *bool    `yaml:"enabled"`
+		Database   string   `yaml:"database"`
+		Realm      string   `yaml:"realm"`
+		Generation string   `yaml:"generation"`
+		Policies   []string `yaml:"policies"`
 	}
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
@@ -98,6 +99,26 @@ func readAccessManifest(projectPath string) (config access.FilePolicyConfig, pre
 		return config, true, errors.New("dalgo2ingitdb: access manifest requires explicit enabled")
 	}
 	config = access.FilePolicyConfig{Enabled: *document.Enabled, Database: document.Database, Realm: document.Realm, Policies: document.Policies}
+	if document.Generation != "" {
+		if !isSHA256(document.Generation) {
+			return config, true, errors.New("dalgo2ingitdb: invalid access generation revision")
+		}
+		base := filepath.Join(accessDir, "generations", document.Generation)
+		generation, err := readAndVerifyGeneration(base, document.Generation)
+		if err != nil {
+			return config, true, fmt.Errorf("dalgo2ingitdb: verify active access generation: %w", err)
+		}
+		if generation.Enabled != *document.Enabled || generation.Database != document.Database || generation.Realm != document.Realm || len(generation.Policies) != len(config.Policies) {
+			return config, true, errors.New("dalgo2ingitdb: active manifest does not match its generation")
+		}
+		for i, policy := range config.Policies {
+			prefix := filepath.ToSlash(filepath.Join("generations", document.Generation, "policies")) + "/"
+			expected := prefix + generation.Policies[i].ID + ".yaml"
+			if filepath.ToSlash(policy) != expected {
+				return config, true, errors.New("dalgo2ingitdb: active generation policy path is outside its generation")
+			}
+		}
+	}
 	if config.Enabled && len(config.Policies) == 0 {
 		return config, true, errors.New("dalgo2ingitdb: enabled access manifest requires at least one policy")
 	}
