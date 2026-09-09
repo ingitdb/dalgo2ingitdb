@@ -48,6 +48,26 @@ wrapper otherwise receives the computed value after evaluation. Standalone
 callers that omit the option and have no owner manifest retain legacy computed
 column behavior.
 
+Editable Git-backed owners can opt into immutable generations. The active
+manifest then names a SHA-256 generation under
+`.ingitdb/access/generations/<digest>`. Each generation contains its own
+manifest and canonicalized YAML policy files. Publication validates the whole
+set, fsyncs and renames the generation, creates a Git commit from a disposable
+index, advances `HEAD` with compare-and-swap, and only then replaces the
+working active pointer and live compiled snapshot. Startup treats committed
+`HEAD` as authoritative and reconstructs a missing or stale working pointer;
+unreferenced incomplete generations never become active. Flat policy lists
+remain supported for read-only legacy configuration and do not opt into this
+publication protocol.
+
+`OwnerPolicyController.Publish` and the matching method on a generation-backed
+database require the expected active generation revision. `Reload` validates
+and compiles one complete committed generation for atomic installation. The
+current DALgo policy provider pins that snapshot once per operation or
+transaction. Publication and filesystem writes share the adapter writer lock,
+but policy-provider pinning occurs before that storage lock; a later
+coordinator must close that admission race for protected writes.
+
 Query cancellation is cooperative. The adapter checks the context before and
 after loading and while converting loaded rows, and `GetMulti` checks between
 records. A single filesystem read, YAML decode, formula evaluation in legacy
