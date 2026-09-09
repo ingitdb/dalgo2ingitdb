@@ -60,7 +60,15 @@ type Database struct {
 }
 
 type databaseOptions struct {
-	storedOnlyReads bool
+	storedOnlyReads  bool
+	protectedProfile bool
+}
+
+// WithProtectedProfile exposes the trusted coordinator factory used by a
+// mounting database. It does not change legacy access until the factory is
+// configured with mandatory participants.
+func WithProtectedProfile() DatabaseOption {
+	return func(options *databaseOptions) { options.protectedProfile = true }
 }
 
 // DatabaseOption configures adapter behavior selected before the database is
@@ -111,6 +119,10 @@ func NewDatabase(projectPath string, reader ingitdb.CollectionsReader, options .
 		return nil, err
 	}
 	if !present || !config.Enabled {
+		if settings.protectedProfile {
+			writer, _ := dal.As[dal.WriteSession](db)
+			return &protectedFactoryDatabase{protectedDatabase: protectedDatabase{DB: db, schema: backend, backend: backend, writer: writer}, SchemaModifier: backend}, nil
+		}
 		return db, nil
 	}
 	backend.storedOnlyReads = true
@@ -146,7 +158,7 @@ func NewDatabase(projectPath string, reader ingitdb.CollectionsReader, options .
 	if err != nil {
 		return nil, fmt.Errorf("dalgo2ingitdb: secure database: %w", err)
 	}
-	return &securedDatabase{DB: secured, schema: backend, controller: controller, ownerState: state}, nil
+	return &securedDatabase{DB: secured, schema: backend, controller: controller, ownerState: state, backend: backend}, nil
 }
 
 // securedDatabase preserves read-only schema introspection without making the
@@ -157,6 +169,7 @@ type securedDatabase struct {
 	schema     dbschema.SchemaReader
 	controller *OwnerPolicyController
 	ownerState *atomic.Pointer[OwnerPolicySnapshot]
+	backend    *Database
 }
 
 func (db *securedDatabase) ReloadOwnerPolicies(ctx context.Context) (string, error) {
