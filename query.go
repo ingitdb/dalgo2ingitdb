@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/dal-go/dalgo/condeval"
 	"github.com/dal-go/dalgo/dal"
 
 	"github.com/dal-go/record"
@@ -33,6 +34,13 @@ func executeQueryToRecordsReader(ctx context.Context, r readonlyTx, query dal.Qu
 	}
 	// collectionFromQuery already validated that query is a StructuredQuery.
 	sq, _ := query.(dal.StructuredQuery)
+	protected := r.db != nil && r.db.storedOnlyReads
+	if protected && sq.Where() != nil {
+		info, validationErr := condeval.Validate(sq.Where())
+		if validationErr != nil || len(info.Params) != 0 {
+			return nil, fmt.Errorf("dalgo2ingitdb: protected query predicate: %w", dal.ErrNotSupported)
+		}
+	}
 
 	var records []record.Record
 	if r.db != nil && r.db.storedOnlyReads {
@@ -58,7 +66,11 @@ func executeQueryToRecordsReader(ctx context.Context, r readonlyTx, query dal.Qu
 	}
 
 	if cond := sq.Where(); cond != nil {
-		records, err = applyWhereContext(ctx, records, cond)
+		if protected {
+			records, err = applyProtectedWhereContext(ctx, records, cond)
+		} else {
+			records, err = applyWhereContext(ctx, records, cond)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -642,6 +654,31 @@ func buildKeyExtractor(nameTemplate string) (func(relPath string) string, error)
 
 func applyWhere(records []record.Record, cond dal.Condition) ([]record.Record, error) {
 	return applyWhereContext(context.Background(), records, cond)
+}
+
+// Protected query predicates include owner row restrictions. They must use
+// exactly the evaluator used by point authorization, including type and
+// missing-field semantics, before pagination can hide any rejected rows.
+func applyProtectedWhereContext(ctx context.Context, records []record.Record, cond dal.Condition) ([]record.Record, error) {
+	filtered := records[:0]
+	for _, rec := range records {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		data, err := condeval.ToMap(rec.Data())
+		if err != nil {
+			return nil, fmt.Errorf("dalgo2ingitdb: protected query image: %w", dal.ErrNotSupported)
+		}
+		data["$id"] = fmt.Sprint(rec.Key().ID)
+		match, err := condeval.Match(data, cond)
+		if err != nil {
+			return nil, err
+		}
+		if match {
+			filtered = append(filtered, rec)
+		}
+	}
+	return filtered, nil
 }
 
 func applyWhereContext(ctx context.Context, records []record.Record, cond dal.Condition) ([]record.Record, error) {
