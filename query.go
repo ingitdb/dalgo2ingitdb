@@ -72,6 +72,15 @@ func executeQueryToRecordsReader(ctx context.Context, r readonlyTx, query dal.Qu
 	if orderBy := sq.OrderBy(); len(orderBy) > 0 {
 		applyOrderBy(records, orderBy)
 	}
+	// Offset applies to the already authorized/filtered and ordered rows,
+	// before limit, just as in the grouped path and other query adapters.
+	if offset := sq.Offset(); offset > 0 {
+		if offset >= len(records) {
+			records = records[:0]
+		} else {
+			records = records[offset:]
+		}
+	}
 	if limit := sq.Limit(); limit > 0 && len(records) > limit {
 		records = records[:limit]
 	}
