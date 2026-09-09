@@ -62,13 +62,19 @@ publication protocol.
 
 `OwnerPolicyController.Publish` and the matching method on a generation-backed
 database require the expected active generation revision. `Reload` validates
-and compiles one complete committed generation for atomic installation. The
-current DALgo policy provider pins that snapshot once per operation or
-transaction. Publication and filesystem writes share the adapter writer lock,
-but policy-provider pinning occurs before that storage lock; a later
-coordinator must close that admission race for protected writes.
+and compiles one complete committed generation for atomic installation. The protected coordinator acquires the storage boundary before policy leases
+and retains them through evidence, authorization and commit. Publication and
+filesystem writes share the adapter writer lock. Mounted reload/publication
+also serialize snapshot activation so an older reload cannot undo a revocation.
 
 Query cancellation is cooperative. The adapter checks the context before and
 after loading and while converting loaded rows, and `GetMulti` checks between
 records. A single filesystem read, YAML decode, formula evaluation in legacy
 mode, or in-memory sort runs to completion before cancellation is observed.
+
+Protected query row predicates use DALgo's shared evaluator, including nested
+fields, type distinctions, missing-versus-null handling and IN. Restrictions
+apply before offset/limit. Synthetic `$id` predicates are unsupported in this
+profile because point policy evaluation addresses stored fields; exact-key
+access uses the resource path. `$id` remains supported for deterministic ordering
+and record identity, and is never injected into a stored policy image.

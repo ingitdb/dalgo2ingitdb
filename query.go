@@ -40,6 +40,14 @@ func executeQueryToRecordsReader(ctx context.Context, r readonlyTx, query dal.Qu
 		if validationErr != nil || len(info.Params) != 0 {
 			return nil, fmt.Errorf("dalgo2ingitdb: protected query predicate: %w", dal.ErrNotSupported)
 		}
+		for _, field := range info.Fields {
+			if field == "$id" || strings.HasPrefix(field, "$id.") {
+				// Synthetic query identity is not a stored field in point policy
+				// evaluation. Until it has shared semantics, reject predicates
+				// on it; callers can use an exact resource path for key access.
+				return nil, fmt.Errorf("dalgo2ingitdb: protected identity predicate: %w", dal.ErrNotSupported)
+			}
+		}
 	}
 
 	var records []record.Record
@@ -669,7 +677,6 @@ func applyProtectedWhereContext(ctx context.Context, records []record.Record, co
 		if err != nil {
 			return nil, fmt.Errorf("dalgo2ingitdb: protected query image: %w", dal.ErrNotSupported)
 		}
-		data["$id"] = fmt.Sprint(rec.Key().ID)
 		match, err := condeval.Match(data, cond)
 		if err != nil {
 			return nil, err
