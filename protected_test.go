@@ -17,7 +17,7 @@ import (
 	"github.com/ingitdb/ingitdb-go/ingitdb/validator"
 )
 
-func setupProtectedCountries(t *testing.T) (dal.DB, *access.EnforcementCoordinator, string) {
+func setupProtectedCountries(t *testing.T, upper ...access.MandatoryParticipant) (dal.DB, *access.EnforcementCoordinator, string) {
 	t.Helper()
 	root := t.TempDir()
 	legacy, err := dalgo2ingitdb.NewDatabase(root, validator.NewCollectionsReader())
@@ -75,7 +75,7 @@ scopes:
 	if !ok {
 		t.Fatal("missing protected factory")
 	}
-	secured, coordinator, err := factory.ConfigureProtectedAccess()
+	secured, coordinator, err := factory.ConfigureProtectedAccess(upper...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,5 +256,40 @@ func TestProtectedProfile_LockWaitHonorsCancellation(t *testing.T) {
 	close(release)
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestProtectedProfile_ValidationOnlyParticipantDoesNotBreakReadPolicies(t *testing.T) {
+	validated := 0
+	validationOnly := access.MandatoryParticipant{LayerID: "openvaultdb-schema", Validator: func(_ context.Context, _ access.ProtectedOperation, _ map[string]any) error { validated++; return nil }}
+	db, _, _ := setupProtectedCountries(t, validationOnly)
+	ctx := access.WithCurrentUser(context.Background(), "u1")
+	rec := record.NewRecordWithData(record.NewKeyWithID("countries", "one"), map[string]any{})
+	if err := db.Get(ctx, rec); err != nil {
+		t.Fatalf("owner read with validation-only upper: %v", err)
+	}
+	writer, _ := dal.As[dal.WriteSession](db)
+	if err := writer.Update(ctx, rec.Key(), []update.Update{update.ByFieldName("name", "Validated")}); err != nil {
+		t.Fatal(err)
+	}
+	if validated != 1 {
+		t.Fatalf("validator calls=%d, want 1", validated)
+	}
+}
+
+func TestProtectedProfile_MissingUpdateInspectionDoesNotFabricateCandidate(t *testing.T) {
+	_, coordinator, _ := setupProtectedCountries(t)
+	ctx := access.WithCurrentUser(context.Background(), "u1")
+	op, err := access.NewProtectedUpdate("missing", record.NewKeyWithID("countries", "missing"), []update.Update{update.ByFieldName("name", "x")}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	err = coordinator.WithinInspection(ctx, []access.ProtectedOperation{op}, func(session access.InspectionSession) error { called = true; _, err := session.Assess(ctx); return err })
+	if err != nil {
+		t.Fatalf("missing update inspection: %v", err)
+	}
+	if !called {
+		t.Fatal("inspection callback not invoked")
 	}
 }
