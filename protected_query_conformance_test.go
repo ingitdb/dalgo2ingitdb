@@ -78,3 +78,35 @@ func TestProtectedQueryPredicateMatchesPointAuthorization(t *testing.T) {
 		})
 	}
 }
+
+func TestProtectedQueryRejectsSyntheticIdentityPolicy(t *testing.T) {
+	for _, stored := range []string{"name: Two\n", "name: Two\n$id: conflicting\n"} {
+		t.Run(stored, func(t *testing.T) {
+			_, _, root := setupProtectedCountries(t)
+			writeYAMLRecord(t, root, "countries", "two", stored)
+			writeOwnerPolicy(t, root, "countries", `"*"`)
+			raw, err := dalgo2ingitdb.NewDatabase(root, validator.NewCollectionsReader(), dalgo2ingitdb.WithProtectedProfile())
+			if err != nil {
+				t.Fatal(err)
+			}
+			condition := dal.WhereField("$id", dal.Equal, "two")
+			policy := access.MustPolicy("identity", access.Collection("countries", access.Allow(access.Query).Where(condition)), access.Scope("countries", access.AnyID, access.Allow(access.Get).Where(condition)))
+			participant, err := access.NewStaticParticipant("identity", policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			db, _, err := raw.(dalgo2ingitdb.ProtectedAccessConfigurer).ConfigureProtectedAccess(participant)
+			if err != nil {
+				t.Fatal(err)
+			}
+			point := record.NewRecordWithData(record.NewKeyWithID("countries", "two"), map[string]any{})
+			if err := db.Get(context.Background(), point); !errors.Is(err, access.ErrAccessDenied) {
+				t.Fatalf("point must not use synthetic identity: %v", err)
+			}
+			query := dal.From(dal.NewRootCollectionRef("countries", "")).NewQuery().SelectKeysOnly(reflect.String)
+			if _, err := db.ExecuteQueryToRecordsReader(context.Background(), query); !errors.Is(err, dal.ErrNotSupported) {
+				t.Fatalf("identity policy query must fail unsupported: %v", err)
+			}
+		})
+	}
+}
