@@ -141,6 +141,9 @@ func configureProtected(backend *Database, schema dbschema.SchemaReader, owner *
 			}
 		}()
 		for _, participant := range participants {
+			if participant.Provider == nil {
+				continue
+			}
 			lease, err := participant.Provider(ctx)
 			if err != nil || lease == nil || len(lease.Policies()) == 0 {
 				if err == nil {
@@ -348,6 +351,12 @@ func (s *protectedStorage) prepare(ctx context.Context, ro readonlyTx, ops []acc
 		candidate := cloneMap(op.Data())
 		if op.Action() == access.Update {
 			candidate = cloneMap(pre)
+			if !exists {
+				// Missing-update admission is decided after policy assessment.
+				// Keep the image absent so storage does not fabricate a row or
+				// dereference a nil pre-image before visibility is established.
+				candidate = nil
+			}
 			for _, u := range op.Updates() {
 				if !u.Delete {
 					if _, ok := dal.IsTransform(u.Value); ok || u.Value == update.ServerTimestamp {
@@ -358,8 +367,10 @@ func (s *protectedStorage) prepare(ctx context.Context, ro readonlyTx, ops []acc
 				if u.Delete {
 					value = update.DeleteField
 				}
-				if err := applyFieldUpdate(candidate, u.Path, value); err != nil {
-					return nil, nil, err
+				if candidate != nil {
+					if err := applyFieldUpdate(candidate, u.Path, value); err != nil {
+						return nil, nil, err
+					}
 				}
 			}
 		}
@@ -419,6 +430,9 @@ func (db *Database) validateProtectedCandidate(ctx context.Context, op access.Pr
 }
 
 func protectedCandidateBytes(col *ingitdb.CollectionDef, key string, action access.Operations, candidate map[string]any) ([]byte, bool, error) {
+	if action != access.Delete && candidate == nil {
+		return nil, false, nil
+	}
 	switch col.RecordFile.RecordType {
 	case ingitdb.SingleRecord:
 		if action == access.Delete {
