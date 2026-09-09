@@ -1,6 +1,7 @@
 package dalgo2ingitdb_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -291,5 +292,68 @@ func TestProtectedProfile_MissingUpdateInspectionDoesNotFabricateCandidate(t *te
 	}
 	if !called {
 		t.Fatal("inspection callback not invoked")
+	}
+}
+
+func TestProtectedNestedOwnershipCannotRewritePreImage(t *testing.T) {
+	_, _, root := setupProtectedCountries(t)
+	path := filepath.Join(root, "countries", "$records", "two.yaml")
+	before := []byte("name: Victim\nmeta:\n  ownerID: victim\n")
+	if err := os.WriteFile(path, before, 0600); err != nil {
+		t.Fatal(err)
+	}
+	policy := `apiVersion: dtql.org/access/v1
+kind: AccessPolicy
+metadata: {name: owner}
+target: {database: protected}
+composition: dalgo-hierarchical-v1
+default: deny
+scopes:
+  - path: /countries/*
+    rules:
+      - id: own
+        effect: allow
+        operations: [update]
+        fields: [meta.ownerID, name]
+        where:
+          op: "=="
+          left: {field: meta.ownerID}
+          right: {param: currentUser}
+`
+	if err := os.WriteFile(filepath.Join(root, ".ingitdb", "access", "owner.yaml"), []byte(policy), 0600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := dalgo2ingitdb.NewDatabase(root, validator.NewCollectionsReader(), dalgo2ingitdb.WithProtectedProfile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, coordinator, err := db.(dalgo2ingitdb.ProtectedAccessConfigurer).ConfigureProtectedAccess()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := access.WithCurrentUser(context.Background(), "attacker")
+	op, err := access.NewProtectedUpdate("takeover", record.NewKeyWithID("countries", "two"), []update.Update{update.ByFieldName("meta.ownerID", "attacker"), update.ByFieldName("name", "Taken")}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = coordinator.WithinInspection(ctx, []access.ProtectedOperation{op}, func(session access.InspectionSession) error {
+		assessment, err := session.Assess(ctx)
+		if err == nil && assessment.Outcome == access.AssessmentAllow {
+			t.Fatal("inspection accepted fabricated ownership")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	err = coordinator.WithinExecution(ctx, []access.ProtectedOperation{op}, func(session access.ExecutionSession) error { _, err := session.Execute(ctx); return err })
+	if !errors.Is(err, access.ErrAccessDenied) {
+		t.Fatalf("ownership takeover must deny: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("denied ownership mutation changed storage")
 	}
 }

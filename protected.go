@@ -499,9 +499,29 @@ func cloneMap(in map[string]any) map[string]any {
 	}
 	out := make(map[string]any, len(in))
 	for k, v := range in {
-		out[k] = v
+		out[k] = cloneImageValue(v)
 	}
 	return out
+}
+
+// Candidates and exported evidence must never share mutable descendants with
+// the pinned pre-image. Preserve scalar types rather than JSON round-tripping
+// integers or timestamps while copying JSON-shaped maps and arrays.
+func cloneImageValue(value any) any {
+	switch value := value.(type) {
+	case map[string]any:
+		return cloneMap(value)
+	case []any:
+		out := make([]any, len(value))
+		for i, item := range value {
+			out[i] = cloneImageValue(item)
+		}
+		return out
+	case []byte:
+		return append([]byte(nil), value...)
+	default:
+		return value
+	}
 }
 func cloneEvidence(in []access.ProtectedEvidence) []access.ProtectedEvidence {
 	out := make([]access.ProtectedEvidence, len(in))
