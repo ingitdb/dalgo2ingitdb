@@ -61,7 +61,7 @@ func readAccessManifest(projectPath string) (config access.FilePolicyConfig, pre
 	if err != nil {
 		return config, true, fmt.Errorf("dalgo2ingitdb: open access manifest: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	openedInfo, err := file.Stat()
 	if err != nil {
 		return config, true, fmt.Errorf("dalgo2ingitdb: inspect opened access manifest: %w", err)

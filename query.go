@@ -87,13 +87,9 @@ func executeQueryToRecordsReader(ctx context.Context, r readonlyTx, query dal.Qu
 	return newSliceRecordsReader(records), nil
 }
 
-// applyGroupBy partitions records into groups keyed by the GROUP BY
+// applyGroupByContext partitions records into groups keyed by the GROUP BY
 // expressions, computes aggregate columns, applies HAVING, ORDER BY, LIMIT, and
 // returns projected group records.
-func applyGroupBy(sq dal.StructuredQuery, records []record.Record, collection string) (dal.RecordsReader, error) {
-	return applyGroupByContext(context.Background(), sq, records, collection)
-}
-
 func applyGroupByContext(ctx context.Context, sq dal.StructuredQuery, records []record.Record, collection string) (dal.RecordsReader, error) {
 	groupBy := sq.GroupBy()
 	columns := sq.Columns()
@@ -403,11 +399,7 @@ func resolveHavingExpr(e dal.Expression, out map[string]any, rows []map[string]a
 	}
 }
 
-// applyProjection reduces each record's data map to only the selected columns.
-func applyProjection(records []record.Record, columns []dal.Column, collection string) ([]record.Record, error) {
-	return applyProjectionContext(context.Background(), records, columns, collection)
-}
-
+// applyProjectionContext reduces each record's data map to only the selected columns.
 func applyProjectionContext(ctx context.Context, records []record.Record, columns []dal.Column, collection string) ([]record.Record, error) {
 	result := make([]record.Record, len(records))
 	for i, rec := range records {
