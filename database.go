@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/dal-go/dalgo/access"
 	"github.com/dal-go/dalgo/dal"
+	"github.com/dal-go/dalgo/dbschema"
 	"github.com/dal-go/dalgo/ddl"
 	"github.com/dal-go/dalgo/recordset"
 
@@ -50,6 +52,25 @@ type Database struct {
 
 	projectPath string
 	reader      ingitdb.CollectionsReader
+	// storedOnlyReads keeps derived values out of the adapter's raw read
+	// result. The policy wrapper can authorize stored fields, but it cannot yet
+	// authorize every dependency used to derive a computed field.
+	storedOnlyReads bool
+}
+
+type databaseOptions struct {
+	storedOnlyReads bool
+}
+
+// DatabaseOption configures adapter behavior selected before the database is
+// exposed to callers.
+type DatabaseOption func(*databaseOptions)
+
+// WithStoredOnlyReads prevents evaluation and return of computed columns. It
+// is intended for callers that apply an access-policy wrapper above this
+// adapter and cannot authorize every dependency used by a derived value.
+func WithStoredOnlyReads() DatabaseOption {
+	return func(options *databaseOptions) { options.storedOnlyReads = true }
 }
 
 // NewDatabase constructs a Database rooted at projectPath. The reader is
@@ -57,7 +78,7 @@ type Database struct {
 // and inside DB-level record-access methods. Returns an error if
 // projectPath is empty or does not exist; the constructor does NOT load
 // any collection definitions.
-func NewDatabase(projectPath string, reader ingitdb.CollectionsReader) (dal.DB, error) {
+func NewDatabase(projectPath string, reader ingitdb.CollectionsReader, options ...DatabaseOption) (dal.DB, error) {
 	if projectPath == "" {
 		return nil, errors.New("dalgo2ingitdb: projectPath is required")
 	}
@@ -68,10 +89,64 @@ func NewDatabase(projectPath string, reader ingitdb.CollectionsReader) (dal.DB, 
 	if !info.IsDir() {
 		return nil, fmt.Errorf("dalgo2ingitdb: %s is not a directory", projectPath)
 	}
-	return dal.NewDB(&Database{
-		projectPath: projectPath,
-		reader:      reader,
-	}), nil
+	var settings databaseOptions
+	for i, option := range options {
+		if option == nil {
+			return nil, fmt.Errorf("dalgo2ingitdb: nil database option at index %d", i)
+		}
+		option(&settings)
+	}
+	backend := &Database{
+		projectPath:     projectPath,
+		reader:          reader,
+		storedOnlyReads: settings.storedOnlyReads,
+	}
+	db := dal.NewDB(backend)
+	config, present, err := readAccessManifest(projectPath)
+	if err != nil {
+		return nil, err
+	}
+	if !present || !config.Enabled {
+		return db, nil
+	}
+	backend.storedOnlyReads = true
+	policies, err := access.LoadPolicyFiles(filepath.Join(projectPath, accessConfigDir), config)
+	if err != nil {
+		return nil, fmt.Errorf("dalgo2ingitdb: load access policies: %w", err)
+	}
+	secured, err := access.SecureDB(db, access.WithDatabasePolicies(policies...))
+	if err != nil {
+		return nil, fmt.Errorf("dalgo2ingitdb: secure database: %w", err)
+	}
+	return &securedDatabase{DB: secured, schema: backend}, nil
+}
+
+// securedDatabase preserves read-only schema introspection without making the
+// underlying backend reachable through dal.BackendOf. Mutation capabilities
+// must not be forwarded because they do not yet have policy semantics.
+type securedDatabase struct {
+	dal.DB
+	schema dbschema.SchemaReader
+}
+
+func (db *securedDatabase) ListCollections(ctx context.Context, parent *dalrecord.Key) ([]dal.CollectionRef, error) {
+	return db.schema.ListCollections(ctx, parent)
+}
+
+func (db *securedDatabase) DescribeCollection(ctx context.Context, ref *dal.CollectionRef) (*dbschema.CollectionDef, error) {
+	return db.schema.DescribeCollection(ctx, ref)
+}
+
+func (db *securedDatabase) ListIndexes(ctx context.Context, ref *dal.CollectionRef) ([]dbschema.IndexDef, error) {
+	return db.schema.ListIndexes(ctx, ref)
+}
+
+func (db *securedDatabase) ListConstraints(ctx context.Context, ref *dal.CollectionRef) ([]dbschema.ConstraintDef, error) {
+	return db.schema.ListConstraints(ctx, ref)
+}
+
+func (db *securedDatabase) ListReferrers(ctx context.Context, ref *dal.CollectionRef) ([]dbschema.Referrer, error) {
+	return db.schema.ListReferrers(ctx, ref)
 }
 
 // DatabaseID is the name reported by Database.ID() and used as the

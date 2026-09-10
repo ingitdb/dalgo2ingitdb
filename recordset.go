@@ -112,6 +112,17 @@ func BuildRecordset(colDef *ingitdb.CollectionDef, records []KeyedStored) record
 	})
 }
 
+func buildStoredOnlyRecordset(colDef *ingitdb.CollectionDef, records []KeyedStored) recordset.Recordset {
+	copyDef := *colDef
+	copyDef.Columns = make(map[string]*ingitdb.ColumnDef, len(colDef.Columns))
+	for name, column := range colDef.Columns {
+		if column.Formula == "" {
+			copyDef.Columns[name] = column
+		}
+	}
+	return BuildRecordset(&copyDef, records)
+}
+
 // buildRecordset is BuildRecordset with an injectable evaluator factory so tests
 // can substitute a counting evaluator to prove lazy, once-per-row resolution.
 func buildRecordset(colDef *ingitdb.CollectionDef, records []KeyedStored, evalFor func(formula string) recordset.Evaluator) recordset.Recordset {
