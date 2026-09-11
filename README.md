@@ -48,7 +48,33 @@ wrapper otherwise receives the computed value after evaluation. Standalone
 callers that omit the option and have no owner manifest retain legacy computed
 column behavior.
 
+Editable Git-backed owners can opt into immutable generations. The active
+manifest then names a SHA-256 generation under
+`.ingitdb/access/generations/<digest>`. Each generation contains its own
+manifest and canonicalized YAML policy files. Publication validates the whole
+set, fsyncs and renames the generation, creates a Git commit from a disposable
+index, advances `HEAD` with compare-and-swap, and only then replaces the
+working active pointer and live compiled snapshot. Startup treats committed
+`HEAD` as authoritative and reconstructs a missing or stale working pointer;
+unreferenced incomplete generations never become active. Flat policy lists
+remain supported for read-only legacy configuration and do not opt into this
+publication protocol.
+
+`OwnerPolicyController.Publish` and the matching method on a generation-backed
+database require the expected active generation revision. `Reload` validates
+and compiles one complete committed generation for atomic installation. The protected coordinator acquires the storage boundary before policy leases
+and retains them through evidence, authorization and commit. Publication and
+filesystem writes share the adapter writer lock. Mounted reload/publication
+also serialize snapshot activation so an older reload cannot undo a revocation.
+
 Query cancellation is cooperative. The adapter checks the context before and
 after loading and while converting loaded rows, and `GetMulti` checks between
 records. A single filesystem read, YAML decode, formula evaluation in legacy
 mode, or in-memory sort runs to completion before cancellation is observed.
+
+Protected query row predicates use DALgo's shared evaluator, including nested
+fields, type distinctions, missing-versus-null handling and IN. Restrictions
+apply before offset/limit. Synthetic `$id` predicates are unsupported in this
+profile because point policy evaluation addresses stored fields; exact-key
+access uses the resource path. `$id` remains supported for deterministic ordering
+and record identity, and is never injected into a stored policy image.

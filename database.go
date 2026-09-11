@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/dal-go/dalgo/access"
 	"github.com/dal-go/dalgo/dal"
@@ -59,7 +61,15 @@ type Database struct {
 }
 
 type databaseOptions struct {
-	storedOnlyReads bool
+	storedOnlyReads  bool
+	protectedProfile bool
+}
+
+// WithProtectedProfile exposes the trusted coordinator factory used by a
+// mounting database. It does not change legacy access until the factory is
+// configured with mandatory participants.
+func WithProtectedProfile() DatabaseOption {
+	return func(options *databaseOptions) { options.protectedProfile = true }
 }
 
 // DatabaseOption configures adapter behavior selected before the database is
@@ -89,6 +99,9 @@ func NewDatabase(projectPath string, reader ingitdb.CollectionsReader, options .
 	if !info.IsDir() {
 		return nil, fmt.Errorf("dalgo2ingitdb: %s is not a directory", projectPath)
 	}
+	if err := recoverCommittedGeneration(context.Background(), projectPath); err != nil {
+		return nil, err
+	}
 	var settings databaseOptions
 	for i, option := range options {
 		if option == nil {
@@ -107,6 +120,10 @@ func NewDatabase(projectPath string, reader ingitdb.CollectionsReader, options .
 		return nil, err
 	}
 	if !present || !config.Enabled {
+		if settings.protectedProfile {
+			writer, _ := dal.As[dal.WriteSession](db)
+			return &protectedFactoryDatabase{protectedDatabase: protectedDatabase{DB: db, schema: backend, backend: backend, writer: writer}, SchemaModifier: backend}, nil
+		}
 		return db, nil
 	}
 	backend.storedOnlyReads = true
@@ -114,11 +131,35 @@ func NewDatabase(projectPath string, reader ingitdb.CollectionsReader, options .
 	if err != nil {
 		return nil, fmt.Errorf("dalgo2ingitdb: load access policies: %w", err)
 	}
-	secured, err := access.SecureDB(db, access.WithDatabasePolicies(policies...))
+	var controller *OwnerPolicyController
+	state := &atomic.Pointer[OwnerPolicySnapshot]{}
+	state.Store(&OwnerPolicySnapshot{Config: config, Policies: append([]access.Policy(nil), policies...)})
+	secureOption := access.WithDatabasePolicies(policies...)
+	if revision, revisionErr := workingGenerationRevision(projectPath); revisionErr != nil {
+		return nil, revisionErr
+	} else if revision != "" {
+		controller, err = NewOwnerPolicyController(projectPath)
+		if err != nil {
+			return nil, err
+		}
+		snapshot, reloadErr := controller.Reload(context.Background())
+		if reloadErr != nil {
+			return nil, reloadErr
+		}
+		state.Store(&snapshot)
+		secureOption = access.WithDatabasePolicyProvider(func(context.Context) ([]access.Policy, error) {
+			current := state.Load()
+			if current == nil || len(current.Policies) == 0 {
+				return nil, errors.New("dalgo2ingitdb: owner policy snapshot unavailable")
+			}
+			return append([]access.Policy(nil), current.Policies...), nil
+		})
+	}
+	secured, err := access.SecureDB(db, secureOption)
 	if err != nil {
 		return nil, fmt.Errorf("dalgo2ingitdb: secure database: %w", err)
 	}
-	return &securedDatabase{DB: secured, schema: backend}, nil
+	return &securedDatabase{DB: secured, schema: backend, controller: controller, ownerState: state, backend: backend}, nil
 }
 
 // securedDatabase preserves read-only schema introspection without making the
@@ -126,7 +167,94 @@ func NewDatabase(projectPath string, reader ingitdb.CollectionsReader, options .
 // must not be forwarded because they do not yet have policy semantics.
 type securedDatabase struct {
 	dal.DB
-	schema dbschema.SchemaReader
+	schema     dbschema.SchemaReader
+	controller *OwnerPolicyController
+	ownerState *atomic.Pointer[OwnerPolicySnapshot]
+	backend    *Database
+	// Serializes mounted management calls through snapshot installation, not
+	// merely the controller's filesystem transaction. A stale reload must not
+	// replace a newer successfully activated revocation.
+	ownerActivation sync.Mutex
+}
+
+func (db *securedDatabase) ReloadOwnerPolicies(ctx context.Context) (string, error) {
+	db.ownerActivation.Lock()
+	defer db.ownerActivation.Unlock()
+	if db.controller == nil || db.ownerState == nil {
+		return "", errors.New("dalgo2ingitdb: owner policy generations are not enabled")
+	}
+	db.ownerState.Store(nil)
+	snapshot, err := db.controller.Reload(ctx)
+	if err != nil {
+		db.ownerState.Store(nil)
+		return "", err
+	}
+	if err := ownerPolicyPublicationHook("reload_before_activation"); err != nil {
+		return "", err
+	}
+	db.ownerState.Store(&snapshot)
+	return snapshot.Revision, nil
+}
+
+func (db *securedDatabase) PublishOwnerPolicyGeneration(ctx context.Context, candidate OwnerPolicyGeneration, expectedRevision, message string) (OwnerPolicyPublication, error) {
+	db.ownerActivation.Lock()
+	defer db.ownerActivation.Unlock()
+	if db.controller == nil || db.ownerState == nil {
+		return OwnerPolicyPublication{}, errors.New("dalgo2ingitdb: owner policy generations are not enabled")
+	}
+	// Close new admissions while HEAD and the in-memory snapshot converge.
+	// Operations that already pinned a provider snapshot are the task-17
+	// coordinator boundary and remain intentionally outside this storage slice.
+	db.ownerState.Store(nil)
+	publication, err := db.controller.Publish(ctx, candidate, expectedRevision, message)
+	if err != nil {
+		snapshot, reloadErr := db.controller.Reload(ctx)
+		if reloadErr != nil {
+			db.ownerState.Store(nil)
+			return publication, fmt.Errorf("%v; authoritative policy reload failed closed: %w", err, reloadErr)
+		}
+		db.ownerState.Store(&snapshot)
+		return publication, err
+	}
+	snapshot, err := db.controller.Reload(ctx)
+	if err != nil {
+		db.ownerState.Store(nil)
+		return publication, fmt.Errorf("dalgo2ingitdb: policy committed; live activation requires reload: %w", err)
+	}
+	db.ownerState.Store(&snapshot)
+	if err := ownerPolicyPublicationHook("snapshot_activated"); err != nil {
+		return publication, err
+	}
+	return publication, nil
+}
+
+// OwnerPolicySnapshot returns the currently installed immutable owner
+// snapshot without reading storage or exposing the underlying database.
+func (db *securedDatabase) OwnerPolicySnapshot(ctx context.Context) (OwnerPolicySnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return OwnerPolicySnapshot{}, err
+	}
+	if db.ownerState == nil {
+		return OwnerPolicySnapshot{}, errors.New("dalgo2ingitdb: owner policies are disabled")
+	}
+	current := db.ownerState.Load()
+	if current == nil {
+		return OwnerPolicySnapshot{}, errors.New("dalgo2ingitdb: owner policy snapshot unavailable")
+	}
+	copy := *current
+	copy.Config.Policies = append([]string(nil), current.Config.Policies...)
+	copy.Policies = append([]access.Policy(nil), current.Policies...)
+	return copy, nil
+}
+
+// AccessPolicies is the storage-neutral trusted policy-provider surface used
+// by embedding hosts. The returned slice is defensive and already compiled.
+func (db *securedDatabase) AccessPolicies(ctx context.Context) ([]access.Policy, error) {
+	snapshot, err := db.OwnerPolicySnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return snapshot.Policies, nil
 }
 
 func (db *securedDatabase) ListCollections(ctx context.Context, parent *dalrecord.Key) ([]dal.CollectionRef, error) {
