@@ -67,7 +67,7 @@ func TestProtectedQueryPredicateMatchesPointAuthorization(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer reader.Close()
+			defer func() { _ = reader.Close() }()
 			rec, err := reader.Next()
 			if err != nil || rec.Key().ID != "two" {
 				t.Fatalf("query must skip denied row before limit: %v, %v", rec, err)

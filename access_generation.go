@@ -222,7 +222,7 @@ func materializeCommittedGeneration(root, revision string, blobs map[string][]by
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmp)
+	defer func() { _ = os.RemoveAll(tmp) }()
 	prefix := filepath.ToSlash(filepath.Join(accessConfigDir, "generations", revision)) + "/"
 	for path, data := range blobs {
 		rel := strings.TrimPrefix(path, prefix)
@@ -433,7 +433,7 @@ func materializeGeneration(root, revision string, manifest generationManifest, s
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(tmp)
+	defer func() { _ = os.RemoveAll(tmp) }()
 	paths := make([]string, 0, len(sources)+1)
 	for name, data := range sources {
 		p := filepath.Join(tmp, filepath.FromSlash(name))
@@ -627,7 +627,7 @@ func atomicWriteFile(name string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	tmp := f.Name()
-	defer os.Remove(tmp)
+	defer func() { _ = os.Remove(tmp) }()
 	if err = f.Chmod(mode); err == nil {
 		_, err = f.Write(data)
 	}
@@ -651,7 +651,7 @@ func syncDir(name string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return f.Sync()
 }
 func gitCommitPolicyCAS(ctx context.Context, root string, paths []string, active []byte, message, expectedHead string) (string, error) {
@@ -660,8 +660,8 @@ func gitCommitPolicyCAS(ctx context.Context, root string, paths []string, active
 		return "", err
 	}
 	indexPath := index.Name()
-	index.Close()
-	defer os.Remove(indexPath)
+	_ = index.Close()
+	defer func() { _ = os.Remove(indexPath) }()
 	env := append(os.Environ(), "GIT_INDEX_FILE="+indexPath)
 	run := func(args ...string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)

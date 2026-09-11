@@ -52,7 +52,7 @@ func TestQueryOffsetAfterFilteringBeforeLimit(t *testing.T) {
 
 func TestProtectedQueryRejectsUnresolvedPredicateOnEmptyCollection(t *testing.T) {
 	tx, _, _ := makeMapOfRecordsRWTx(t)
-	tx.readonlyTx.db = &Database{storedOnlyReads: true}
+	tx.db = &Database{storedOnlyReads: true}
 	query := dal.From(dal.NewRootCollectionRef("scores", "")).NewQuery().
 		WhereField("score", dal.Equal, dal.NewParam("unresolved")).SelectKeysOnly(reflect.String)
 	if _, err := executeQueryToRecordsReader(context.Background(), tx.readonlyTx, query); !errors.Is(err, dal.ErrNotSupported) {

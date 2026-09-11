@@ -304,7 +304,7 @@ func withProtectedLock(ctx context.Context, path string, shared bool, fn func() 
 		}
 		return fmt.Errorf("acquire protected lock on %s", path)
 	}
-	defer contextual.Unlock()
+	defer func() { _ = contextual.Unlock() }()
 	return fn()
 }
 
