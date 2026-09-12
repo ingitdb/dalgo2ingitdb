@@ -2,12 +2,9 @@
 
 package dalgo2ingitdb
 
-import (
-	"errors"
-	"os"
-)
+import "os"
 
-var errRootedFileLockUnsupported = errors.New("dalgo2ingitdb: rooted file locking is not supported on this platform")
+func rootedFileLockingSupported() bool { return false }
 
 func withRootedSharedFileLock(_ *os.File, _ func() error) error {
 	return errRootedFileLockUnsupported

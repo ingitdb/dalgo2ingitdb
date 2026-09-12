@@ -9,6 +9,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func rootedFileLockingSupported() bool { return true }
+
 func withRootedSharedFileLock(file *os.File, fn func() error) error {
 	if err := unix.Flock(int(file.Fd()), unix.LOCK_SH); err != nil {
 		return fmt.Errorf("dalgo2ingitdb: acquire rooted shared file lock: %w", err)
