@@ -48,8 +48,9 @@ type RootedFiles struct {
 }
 
 var (
-	errRootedFilesClosed  = errors.New("dalgo2ingitdb: rooted files is closed")
-	errLockedFilesExpired = errors.New("dalgo2ingitdb: rooted files lock callback has ended")
+	errRootedFilesClosed     = errors.New("dalgo2ingitdb: rooted files is closed")
+	errLockedFilesExpired    = errors.New("dalgo2ingitdb: rooted files lock callback has ended")
+	errJSONLMaxBytesExceeded = errors.New("dalgo2ingitdb: JSONL exceeds configured maximum bytes")
 )
 
 // LockedFiles is the callback-scoped view supplied by WithExclusiveLock. It
@@ -60,6 +61,7 @@ var (
 type LockedFiles interface {
 	AppendJSONL(relativePath string, value any) error
 	ReadJSONL(relativePath string) ([]json.RawMessage, error)
+	ReadJSONLWithLimit(relativePath string, maxBytes int64) ([]json.RawMessage, error)
 	WriteJSONAtomic(relativePath string, value any) error
 	WriteJSONAtomicWithMode(relativePath string, value any, mode os.FileMode) error
 	ReadJSON(relativePath string, target any) error
@@ -86,12 +88,23 @@ func (l *lockedFiles) AppendJSONL(relativePath string, value any) error {
 }
 
 func (l *lockedFiles) ReadJSONL(relativePath string) ([]json.RawMessage, error) {
+	return l.readJSONL(relativePath, -1)
+}
+
+func (l *lockedFiles) ReadJSONLWithLimit(relativePath string, maxBytes int64) ([]json.RawMessage, error) {
+	if maxBytes <= 0 {
+		return nil, fmt.Errorf("dalgo2ingitdb: JSONL maximum bytes must be positive")
+	}
+	return l.readJSONL(relativePath, maxBytes)
+}
+
+func (l *lockedFiles) readJSONL(relativePath string, maxBytes int64) ([]json.RawMessage, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if !l.active {
 		return nil, errLockedFilesExpired
 	}
-	return l.files.readJSONL(relativePath)
+	return l.files.recoverAndReadJSONL(relativePath, maxBytes)
 }
 
 func (l *lockedFiles) WriteJSONAtomic(relativePath string, value any) error {
@@ -142,6 +155,7 @@ type rootedFileOps struct {
 	sync       func(*os.File) error
 	close      func(*os.File) error
 	readAll    func(io.Reader) ([]byte, error)
+	read       func(io.Reader, []byte) (int, error)
 	seek       func(*os.File, int64, int) (int64, error)
 	truncate   func(*os.File, int64) error
 	randomRead func([]byte) (int, error)
@@ -153,6 +167,7 @@ func defaultRootedFileOps() rootedFileOps {
 		sync:       func(file *os.File) error { return file.Sync() },
 		close:      func(file *os.File) error { return file.Close() },
 		readAll:    io.ReadAll,
+		read:       func(reader io.Reader, buffer []byte) (int, error) { return reader.Read(buffer) },
 		seek:       func(file *os.File, offset int64, whence int) (int64, error) { return file.Seek(offset, whence) },
 		truncate:   func(file *os.File, size int64) error { return file.Truncate(size) },
 		randomRead: rand.Read,
@@ -388,10 +403,24 @@ func (f *RootedFiles) ReadJSONL(relativePath string) ([]json.RawMessage, error) 
 		return nil, err
 	}
 	defer f.endOperation()
-	return f.readJSONL(relativePath)
+	return f.readJSONL(relativePath, -1)
 }
 
-func (f *RootedFiles) readJSONL(relativePath string) ([]json.RawMessage, error) {
+// ReadJSONLWithLimit reads and decodes a JSONL stream without allocating more
+// than maxBytes for its contents. maxBytes must be positive. Like ReadJSONL,
+// this public read is non-mutating and refuses an interrupted final line.
+func (f *RootedFiles) ReadJSONLWithLimit(relativePath string, maxBytes int64) ([]json.RawMessage, error) {
+	if maxBytes <= 0 {
+		return nil, fmt.Errorf("dalgo2ingitdb: JSONL maximum bytes must be positive")
+	}
+	if err := f.beginOperation(); err != nil {
+		return nil, err
+	}
+	defer f.endOperation()
+	return f.readJSONL(relativePath, maxBytes)
+}
+
+func (f *RootedFiles) readJSONL(relativePath string, maxBytes int64) ([]json.RawMessage, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	relativePath, err := f.scopedRelativePath(relativePath)
@@ -405,24 +434,43 @@ func (f *RootedFiles) readJSONL(relativePath string) ([]json.RawMessage, error) 
 	defer func() { _ = f.fileOps.close(file) }()
 	var records []json.RawMessage
 	err = withRootedSharedFileLock(file, func() error {
-		content, readErr := f.fileOps.readAll(file)
-		if readErr != nil {
-			return fmt.Errorf("dalgo2ingitdb: read JSONL %q: %w", relativePath, readErr)
+		var readErr error
+		records, readErr = readJSONLRecords(file, relativePath, f.fileOps, maxBytes)
+		return readErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return records, nil
+}
+
+// recoverAndReadJSONL is available only through LockedFiles, whose outer
+// WithExclusiveLock lease keeps Close from invalidating the descriptor. It
+// recovers an uncommitted unterminated tail before replay, but leaves malformed
+// newline-terminated records immutable and reports them as an error.
+func (f *RootedFiles) recoverAndReadJSONL(relativePath string, maxBytes int64) ([]json.RawMessage, error) {
+	if maxBytes == 0 || maxBytes < -1 {
+		return nil, fmt.Errorf("dalgo2ingitdb: JSONL maximum bytes must be positive")
+	}
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	relativePath, err := f.scopedRelativePath(relativePath)
+	if err != nil {
+		return nil, err
+	}
+	file, err := f.openFile(relativePath, os.O_RDWR, 0)
+	if err != nil {
+		return nil, fmt.Errorf("dalgo2ingitdb: open JSONL recovery read %q: %w", relativePath, err)
+	}
+	defer func() { _ = f.fileOps.close(file) }()
+	var records []json.RawMessage
+	err = withRootedExclusiveFileLock(file, func() error {
+		if err := recoverJSONLTailWithLimit(file, relativePath, f.fileOps, maxBytes); err != nil {
+			return err
 		}
-		if len(content) > 0 && content[len(content)-1] != '\n' {
-			return fmt.Errorf("dalgo2ingitdb: interrupted JSONL tail at %q requires recovery before replay", relativePath)
-		}
-		for lineNumber, raw := range bytes.Split(content, []byte{'\n'}) {
-			line := bytes.TrimSpace(raw)
-			if len(line) == 0 {
-				continue
-			}
-			if !json.Valid(line) || line[0] != '{' {
-				return fmt.Errorf("dalgo2ingitdb: invalid JSONL record at %q line %d", relativePath, lineNumber+1)
-			}
-			records = append(records, append(json.RawMessage(nil), line...))
-		}
-		return nil
+		var readErr error
+		records, readErr = readJSONLRecords(file, relativePath, f.fileOps, maxBytes)
+		return readErr
 	})
 	if err != nil {
 		return nil, err
@@ -817,10 +865,14 @@ func ensureRealRootedScope(root *os.Root, prefix string) (os.FileInfo, error) {
 // malformed line that has a newline is already committed bytes and therefore
 // fails rather than being silently rewritten.
 func recoverJSONLTail(file *os.File, relativePath string, ops rootedFileOps) error {
+	return recoverJSONLTailWithLimit(file, relativePath, ops, -1)
+}
+
+func recoverJSONLTailWithLimit(file *os.File, relativePath string, ops rootedFileOps, maxBytes int64) error {
 	if _, err := ops.seek(file, 0, io.SeekStart); err != nil {
 		return fmt.Errorf("dalgo2ingitdb: seek JSONL %q for recovery: %w", relativePath, err)
 	}
-	content, err := ops.readAll(file)
+	content, err := readJSONLContent(file, ops, maxBytes)
 	if err != nil {
 		return fmt.Errorf("dalgo2ingitdb: read JSONL %q for recovery: %w", relativePath, err)
 	}
@@ -850,6 +902,56 @@ func recoverJSONLTail(file *os.File, relativePath string, ops rootedFileOps) err
 		return fmt.Errorf("dalgo2ingitdb: seek JSONL %q for append: %w", relativePath, err)
 	}
 	return nil
+}
+
+func readJSONLRecords(file *os.File, relativePath string, ops rootedFileOps, maxBytes int64) ([]json.RawMessage, error) {
+	if _, err := ops.seek(file, 0, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("dalgo2ingitdb: seek JSONL %q for read: %w", relativePath, err)
+	}
+	content, err := readJSONLContent(file, ops, maxBytes)
+	if err != nil {
+		return nil, fmt.Errorf("dalgo2ingitdb: read JSONL %q: %w", relativePath, err)
+	}
+	if len(content) > 0 && content[len(content)-1] != '\n' {
+		return nil, fmt.Errorf("dalgo2ingitdb: interrupted JSONL tail at %q requires recovery before replay", relativePath)
+	}
+	var records []json.RawMessage
+	for lineNumber, raw := range bytes.Split(content, []byte{'\n'}) {
+		line := bytes.TrimSpace(raw)
+		if len(line) == 0 {
+			continue
+		}
+		if !json.Valid(line) || line[0] != '{' {
+			return nil, fmt.Errorf("dalgo2ingitdb: invalid JSONL record at %q line %d", relativePath, lineNumber+1)
+		}
+		records = append(records, append(json.RawMessage(nil), line...))
+	}
+	return records, nil
+}
+
+func readJSONLContent(file *os.File, ops rootedFileOps, maxBytes int64) ([]byte, error) {
+	if maxBytes == 0 {
+		return nil, errors.New("JSONL maximum bytes must be positive")
+	}
+	reader := io.Reader(file)
+	if maxBytes > 0 {
+		reader = io.LimitReader(file, maxBytes)
+	}
+	content, err := ops.readAll(reader)
+	if err != nil {
+		return nil, err
+	}
+	if maxBytes > 0 && int64(len(content)) == maxBytes {
+		var extra [1]byte
+		n, readErr := ops.read(file, extra[:])
+		if n > 0 {
+			return nil, errJSONLMaxBytesExceeded
+		}
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return nil, readErr
+		}
+	}
+	return content, nil
 }
 
 func rootedRelativePath(value string) (string, error) {

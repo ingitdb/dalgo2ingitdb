@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -308,6 +309,89 @@ func TestRootedFilesRecoversOnlyUnterminatedTail(t *testing.T) {
 		t.Fatalf("interrupted tail was retained: %q", raw)
 	}
 	assertJSONLSeqs(t, files, eventPath, []int{1, 3})
+}
+
+func TestLockedFilesReadJSONLRecoversUnterminatedTail(t *testing.T) {
+	root, files := openIncidentFiles(t)
+	const eventPath = "INC-1/events.jsonl"
+	if err := files.AppendJSONL(eventPath, map[string]any{"seq": 1}); err != nil {
+		t.Fatal(err)
+	}
+	physical := filepath.Join(root, "incidents", "INC-1", "events.jsonl")
+	if err := appendRaw(physical, `{"seq":2`); err != nil {
+		t.Fatal(err)
+	}
+	if err := files.WithExclusiveLock(context.Background(), ".store/lock", func(locked LockedFiles) error {
+		records, err := locked.ReadJSONL(eventPath)
+		if err != nil {
+			return err
+		}
+		if len(records) != 1 {
+			return fmt.Errorf("recovered records = %d, want 1", len(records))
+		}
+		records, err = locked.ReadJSONLWithLimit(eventPath, 1024)
+		if err != nil || len(records) != 1 {
+			return fmt.Errorf("bounded recovered records = %d, %w", len(records), err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("locked recovery read: %v", err)
+	}
+	raw, err := os.ReadFile(physical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `{"seq":2`) {
+		t.Fatalf("interrupted tail retained after locked read: %q", raw)
+	}
+}
+
+func TestRootedFilesJSONLReadLimitAndCommittedMalformedTail(t *testing.T) {
+	root, files := openIncidentFiles(t)
+	const eventPath = "INC-1/events.jsonl"
+	if err := files.AppendJSONL(eventPath, map[string]any{"seq": 1}); err != nil {
+		t.Fatal(err)
+	}
+	physical := filepath.Join(root, "incidents", "INC-1", "events.jsonl")
+	raw, err := os.ReadFile(physical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := files.ReadJSONLWithLimit(eventPath, int64(len(raw)-1)); !errors.Is(err, errJSONLMaxBytesExceeded) {
+		t.Fatalf("bounded read below content size = %v, want max-byte error", err)
+	}
+	if records, err := files.ReadJSONLWithLimit(eventPath, int64(len(raw))); err != nil || len(records) != 1 {
+		t.Fatalf("bounded read at content size = %d records, %v", len(records), err)
+	}
+	if _, err := files.ReadJSONLWithLimit(eventPath, 0); err == nil {
+		t.Fatal("zero JSONL limit accepted")
+	}
+	if err := files.WithExclusiveLock(context.Background(), ".store/limit-lock", func(locked LockedFiles) error {
+		_, err := locked.ReadJSONLWithLimit(eventPath, 0)
+		return err
+	}); err == nil {
+		t.Fatal("locked read accepted zero JSONL limit")
+	}
+	if err := appendRaw(physical, "not-json\n"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(physical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := files.WithExclusiveLock(context.Background(), ".store/lock", func(locked LockedFiles) error {
+		_, err := locked.ReadJSONLWithLimit(eventPath, 1024)
+		return err
+	}); err == nil {
+		t.Fatal("locked read accepted malformed committed JSONL record")
+	}
+	after, err := os.ReadFile(physical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("locked read rewrote malformed committed bytes: before=%q after=%q", before, after)
+	}
 }
 
 func TestRootedFilesRejectsMalformedCommittedTail(t *testing.T) {
