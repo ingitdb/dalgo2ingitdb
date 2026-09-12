@@ -216,6 +216,65 @@ func TestRootedFilesRejectsInProjectSymlinkOutsideAuthorizedScope(t *testing.T) 
 	}
 }
 
+func TestRootedFilesRejectsScopeSwapDuringAcquisition(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "incidents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, ".ingitdb"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files, err := openRootedFilesWith(root, incidentScope, func(projectRoot *os.Root, prefix string) (*os.Root, error) {
+		if err := os.Rename(filepath.Join(root, prefix), filepath.Join(root, "incidents-verified")); err != nil {
+			return nil, err
+		}
+		if err := os.Symlink(".ingitdb", filepath.Join(root, prefix)); err != nil {
+			return nil, err
+		}
+		return projectRoot.OpenRoot(prefix)
+	})
+	if err == nil {
+		_ = files.Close()
+		t.Fatal("scope acquisition accepted swapped in-project symlink")
+	}
+	entries, readErr := os.ReadDir(filepath.Join(root, ".ingitdb"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("scope acquisition mutated out-of-scope directory: %v", entries)
+	}
+}
+
+func TestRootedFilesKeepsOpenedScopeAcrossScopePathSwap(t *testing.T) {
+	root, files := openIncidentFiles(t)
+	if err := os.Mkdir(filepath.Join(root, ".ingitdb"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	moved := filepath.Join(root, "incidents-verified")
+	if err := os.Rename(filepath.Join(root, "incidents"), moved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(".ingitdb", filepath.Join(root, "incidents")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := files.AppendJSONL("INC-1/events.jsonl", map[string]any{"seq": 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := files.WriteJSONAtomic("INC-1/incident.json", map[string]any{"seq": 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(moved, "INC-1", "events.jsonl")); err != nil {
+		t.Fatalf("opened scope did not receive event: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(moved, "INC-1", "incident.json")); err != nil {
+		t.Fatalf("opened scope did not receive projection: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".ingitdb", "INC-1")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("swapped scope target was modified: %v", err)
+	}
+}
+
 func TestRootedFilesRetrySyncsEventParentAfterPriorPostFileSyncFailure(t *testing.T) {
 	root, files := openIncidentFiles(t)
 	if err := os.Mkdir(filepath.Join(root, "incidents", "INC-retry"), 0o755); err != nil {
