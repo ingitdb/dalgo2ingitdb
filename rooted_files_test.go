@@ -1,9 +1,12 @@
+//go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris
+
 package dalgo2ingitdb
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,6 +80,192 @@ func TestRootedFilesWriteAndReadJSON(t *testing.T) {
 	if got != want {
 		t.Errorf("ReadJSON = %+v, want %+v", got, want)
 	}
+}
+
+func TestRootedFilesScopedLockCanCallOtherOperations(t *testing.T) {
+	_, files := openIncidentFiles(t)
+	called := false
+	if err := files.WithExclusiveLock(context.Background(), ".store/lock", func() error {
+		called = true
+		return files.AppendJSONL("INC-1/events.jsonl", map[string]any{"seq": 1})
+	}); err != nil {
+		t.Fatalf("WithExclusiveLock: %v", err)
+	}
+	if !called {
+		t.Fatal("lock callback was not called")
+	}
+	assertJSONLSeqs(t, files, "INC-1/events.jsonl", []int{1})
+	entries, err := files.ReadDir(".store")
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "lock" {
+		t.Fatalf("ReadDir entries = %v, want lock", entries)
+	}
+}
+
+func TestRootedFilesWriteJSONAtomicWithMode(t *testing.T) {
+	root, files := openIncidentFiles(t)
+	if err := files.WriteJSONAtomicWithMode(".store/receipt.json", map[string]any{"kind": "receipt"}, 0o600); err != nil {
+		t.Fatalf("WriteJSONAtomicWithMode: %v", err)
+	}
+	info, err := os.Stat(filepath.Join(root, "incidents", ".store", "receipt.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o600 {
+		t.Fatalf("receipt mode = %o, want 600", mode)
+	}
+	if err := files.WriteJSONAtomic("INC-1/incident.json", map[string]any{"seq": 1}); err != nil {
+		t.Fatal(err)
+	}
+	info, err = os.Stat(filepath.Join(root, "incidents", "INC-1", "incident.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o644 {
+		t.Fatalf("projection mode = %o, want 644", mode)
+	}
+	if err := files.WriteJSONAtomicWithMode("invalid.json", map[string]any{}, os.ModeDir|0o600); err == nil {
+		t.Fatal("non-permission mode accepted")
+	}
+}
+
+func TestRootedFilesScopedLockHonorsContext(t *testing.T) {
+	_, files := openIncidentFiles(t)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	holderDone := make(chan error, 1)
+	go func() {
+		holderDone <- files.WithExclusiveLock(context.Background(), ".store/lock", func() error {
+			close(entered)
+			<-release
+			return nil
+		})
+	}()
+	<-entered
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	if err := files.WithExclusiveLock(ctx, ".store/lock", func() error { return nil }); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("waiting lock error = %v, want deadline exceeded", err)
+	}
+	close(release)
+	if err := <-holderDone; err != nil {
+		t.Fatalf("lock holder: %v", err)
+	}
+	if err := files.WithExclusiveLock(context.Background(), ".store/lock", nil); err == nil {
+		t.Fatal("nil lock callback accepted")
+	}
+}
+
+func TestRootedFilesInjectedFileOperationFailures(t *testing.T) {
+	sentinel := errors.New("injected file failure")
+	t.Run("append write", func(t *testing.T) {
+		_, files := openIncidentFiles(t)
+		files.fileOps.write = func(*os.File, []byte) (int, error) { return 0, sentinel }
+		if err := files.AppendJSONL("INC-1/events.jsonl", map[string]any{"seq": 1}); !errors.Is(err, sentinel) {
+			t.Fatalf("AppendJSONL write error = %v", err)
+		}
+	})
+	t.Run("append sync", func(t *testing.T) {
+		_, files := openIncidentFiles(t)
+		files.fileOps.sync = func(*os.File) error { return sentinel }
+		if err := files.AppendJSONL("INC-1/events.jsonl", map[string]any{"seq": 1}); !errors.Is(err, sentinel) {
+			t.Fatalf("AppendJSONL sync error = %v", err)
+		}
+	})
+	t.Run("read stream", func(t *testing.T) {
+		_, files := openIncidentFiles(t)
+		if err := files.AppendJSONL("INC-1/events.jsonl", map[string]any{"seq": 1}); err != nil {
+			t.Fatal(err)
+		}
+		files.fileOps.readAll = func(io.Reader) ([]byte, error) { return nil, sentinel }
+		if _, err := files.ReadJSONL("INC-1/events.jsonl"); !errors.Is(err, sentinel) {
+			t.Fatalf("ReadJSONL read error = %v", err)
+		}
+	})
+	t.Run("projection entropy", func(t *testing.T) {
+		_, files := openIncidentFiles(t)
+		files.fileOps.randomRead = func([]byte) (int, error) { return 0, sentinel }
+		if err := files.WriteJSONAtomic("INC-1/incident.json", map[string]any{"seq": 1}); !errors.Is(err, sentinel) {
+			t.Fatalf("WriteJSONAtomic entropy error = %v", err)
+		}
+	})
+	for _, tc := range []struct {
+		name string
+		set  func(*RootedFiles)
+	}{
+		{name: "projection write", set: func(files *RootedFiles) {
+			files.fileOps.write = func(*os.File, []byte) (int, error) { return 0, sentinel }
+		}},
+		{name: "projection sync", set: func(files *RootedFiles) { files.fileOps.sync = func(*os.File) error { return sentinel } }},
+		{name: "projection close", set: func(files *RootedFiles) {
+			files.fileOps.close = func(file *os.File) error { _ = file.Close(); return sentinel }
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, files := openIncidentFiles(t)
+			tc.set(files)
+			if err := files.WriteJSONAtomic("INC-1/incident.json", map[string]any{"seq": 1}); !errors.Is(err, sentinel) {
+				t.Fatalf("WriteJSONAtomic %s error = %v", tc.name, err)
+			}
+		})
+	}
+}
+
+func TestRecoverJSONLTailInjectedFailures(t *testing.T) {
+	sentinel := errors.New("injected recovery failure")
+	openPartial := func(t *testing.T) *os.File {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "events.jsonl")
+		if err := os.WriteFile(path, []byte(`{"seq":1`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		file, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = file.Close() })
+		return file
+	}
+	for _, tc := range []struct {
+		name string
+		set  func(*rootedFileOps)
+	}{
+		{name: "seek start", set: func(ops *rootedFileOps) { ops.seek = func(*os.File, int64, int) (int64, error) { return 0, sentinel } }},
+		{name: "read", set: func(ops *rootedFileOps) { ops.readAll = func(io.Reader) ([]byte, error) { return nil, sentinel } }},
+		{name: "truncate", set: func(ops *rootedFileOps) { ops.truncate = func(*os.File, int64) error { return sentinel } }},
+		{name: "recovery sync", set: func(ops *rootedFileOps) { ops.sync = func(*os.File) error { return sentinel } }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ops := defaultRootedFileOps()
+			tc.set(&ops)
+			if err := recoverJSONLTail(openPartial(t), "events.jsonl", ops); !errors.Is(err, sentinel) {
+				t.Fatalf("recoverJSONLTail %s error = %v", tc.name, err)
+			}
+		})
+	}
+	t.Run("seek end", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "events.jsonl")
+		if err := os.WriteFile(path, []byte("{\"seq\":1}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		file, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = file.Close() }()
+		ops := defaultRootedFileOps()
+		ops.seek = func(_ *os.File, _ int64, whence int) (int64, error) {
+			if whence == io.SeekEnd {
+				return 0, sentinel
+			}
+			return file.Seek(0, io.SeekStart)
+		}
+		if err := recoverJSONLTail(file, "events.jsonl", ops); !errors.Is(err, sentinel) {
+			t.Fatalf("recoverJSONLTail seek end error = %v", err)
+		}
+	})
 }
 
 func TestRootedFilesSyncsEveryNewDirectoryLink(t *testing.T) {
@@ -541,6 +730,46 @@ func TestRootedFilesFailureSemantics(t *testing.T) {
 	if _, err := openRootedFiles(fileRoot, incidentScope); err == nil {
 		t.Fatal("file root accepted")
 	}
+	rootForOpenErrors := t.TempDir()
+	if _, err := openRootedFilesWithProject(rootForOpenErrors, incidentScope, func(string) (*os.Root, error) {
+		return nil, errors.New("injected project open failure")
+	}, func(root *os.Root, prefix string) (*os.Root, error) { return root.OpenRoot(prefix) }); err == nil {
+		t.Fatal("project open failure accepted")
+	}
+	if _, err := openRootedFilesWithProject(rootForOpenErrors, incidentScope, func(path string) (*os.Root, error) {
+		root, err := os.OpenRoot(path)
+		if err != nil {
+			return nil, err
+		}
+		_ = root.Close()
+		return root, nil
+	}, func(root *os.Root, prefix string) (*os.Root, error) { return root.OpenRoot(prefix) }); err == nil {
+		t.Fatal("closed project root accepted")
+	}
+	if err := os.WriteFile(filepath.Join(rootForOpenErrors, "incidents"), []byte("not directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openRootedFiles(rootForOpenErrors, incidentScope); err == nil {
+		t.Fatal("file scope accepted")
+	}
+	if err := os.Remove(filepath.Join(rootForOpenErrors, "incidents")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openRootedFilesWith(rootForOpenErrors, incidentScope, func(*os.Root, string) (*os.Root, error) {
+		return nil, errors.New("injected scope open failure")
+	}); err == nil {
+		t.Fatal("scope open failure accepted")
+	}
+	if _, err := openRootedFilesWith(rootForOpenErrors, incidentScope, func(root *os.Root, prefix string) (*os.Root, error) {
+		scope, err := root.OpenRoot(prefix)
+		if err != nil {
+			return nil, err
+		}
+		_ = scope.Close()
+		return scope, nil
+	}); err == nil {
+		t.Fatal("closed scope root accepted")
+	}
 	link := filepath.Join(t.TempDir(), "link")
 	if err := os.Symlink(t.TempDir(), link); err == nil {
 		if _, err := openRootedFiles(link, incidentScope); err == nil {
@@ -714,7 +943,7 @@ func TestRecoverJSONLTailSemantics(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = recoverJSONLTail(file, "incidents/INC-1/events.jsonl")
+			err = recoverJSONLTail(file, "incidents/INC-1/events.jsonl", defaultRootedFileOps())
 			_ = file.Close()
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("recoverJSONLTail error = %v, wantErr %v", err, tc.wantErr)
@@ -739,7 +968,7 @@ func TestRecoverJSONLTailFailsOnReadOnlyTruncateAndClosedDescriptor(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := recoverJSONLTail(readOnly, "events.jsonl"); err == nil {
+	if err := recoverJSONLTail(readOnly, "events.jsonl", defaultRootedFileOps()); err == nil {
 		t.Fatal("read-only recovery truncated")
 	}
 	_ = readOnly.Close()
@@ -748,7 +977,7 @@ func TestRecoverJSONLTailFailsOnReadOnlyTruncateAndClosedDescriptor(t *testing.T
 		t.Fatal(err)
 	}
 	_ = closed.Close()
-	if err := recoverJSONLTail(closed, "events.jsonl"); err == nil {
+	if err := recoverJSONLTail(closed, "events.jsonl", defaultRootedFileOps()); err == nil {
 		t.Fatal("closed descriptor recovered")
 	}
 }

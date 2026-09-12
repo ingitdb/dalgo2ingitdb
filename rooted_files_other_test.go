@@ -9,6 +9,8 @@ import (
 	"testing"
 )
 
+var incidentScope = RootedFilesScope{Prefix: "incidents"}
+
 func TestRootedFilesUnsupportedPlatformFailsBeforeFilesystemMutation(t *testing.T) {
 	root := t.TempDir()
 	db, err := NewDatabase(root, newReader(), WithRootedFilesScopes(incidentScope))

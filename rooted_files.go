@@ -35,9 +35,33 @@ type RootedFiles struct {
 	mu            sync.RWMutex
 	creationMu    sync.Mutex
 	syncDirectory func(*os.Root, string) error
+	fileOps       rootedFileOps
 }
 
-var errRootedFileLockUnsupported = errors.New("dalgo2ingitdb: rooted file locking is not supported on this platform")
+// rootedFileOps is deliberately private and per capability. It gives focused
+// tests deterministic access to OS/entropy failure paths without changing the
+// public API or relying on process-global test hooks.
+type rootedFileOps struct {
+	write      func(*os.File, []byte) (int, error)
+	sync       func(*os.File) error
+	close      func(*os.File) error
+	readAll    func(io.Reader) ([]byte, error)
+	seek       func(*os.File, int64, int) (int64, error)
+	truncate   func(*os.File, int64) error
+	randomRead func([]byte) (int, error)
+}
+
+func defaultRootedFileOps() rootedFileOps {
+	return rootedFileOps{
+		write:      func(file *os.File, value []byte) (int, error) { return file.Write(value) },
+		sync:       func(file *os.File) error { return file.Sync() },
+		close:      func(file *os.File) error { return file.Close() },
+		readAll:    io.ReadAll,
+		seek:       func(file *os.File, offset int64, whence int) (int64, error) { return file.Seek(offset, whence) },
+		truncate:   func(file *os.File, size int64) error { return file.Truncate(size) },
+		randomRead: rand.Read,
+	}
+}
 
 // RootedFilesScope is an explicitly authorized, top-level directory for raw
 // inGitDB files. The MVP intentionally supports exactly one clean path segment
@@ -104,14 +128,6 @@ func (db *rootedFilesDatabase) OpenRootedFiles(ctx context.Context, scope Rooted
 	return openRootedFiles(db.backend.projectPath, RootedFilesScope{Prefix: prefix})
 }
 
-// openRootedFiles opens a descriptor-rooted file capability at projectPath.
-// The root itself must be a real directory, not a symlink.
-func openRootedFiles(projectPath string, scope RootedFilesScope) (*RootedFiles, error) {
-	return openRootedFilesWith(projectPath, scope, func(root *os.Root, name string) (*os.Root, error) {
-		return root.OpenRoot(name)
-	})
-}
-
 // openRootedFilesWith keeps the scope-open operation injectable for a
 // deterministic check of the verify/open swap boundary.
 func openRootedFilesWith(projectPath string, scope RootedFilesScope, openScope func(*os.Root, string) (*os.Root, error)) (*RootedFiles, error) {
@@ -121,9 +137,6 @@ func openRootedFilesWith(projectPath string, scope RootedFilesScope, openScope f
 // openRootedFilesWithProject keeps the project-root open operation injectable
 // for a deterministic check of the project verify/open swap boundary.
 func openRootedFilesWithProject(projectPath string, scope RootedFilesScope, openProject func(string) (*os.Root, error), openScope func(*os.Root, string) (*os.Root, error)) (*RootedFiles, error) {
-	if !rootedFileLockingSupported() {
-		return nil, errRootedFileLockUnsupported
-	}
 	prefix, err := scope.validate()
 	if err != nil {
 		return nil, err
@@ -172,7 +185,7 @@ func openRootedFilesWithProject(projectPath string, scope RootedFilesScope, open
 		_ = root.Close()
 		return nil, fmt.Errorf("dalgo2ingitdb: rooted files scope %q changed during acquisition", prefix)
 	}
-	return &RootedFiles{root: root, scope: RootedFilesScope{Prefix: prefix}, syncDirectory: syncRootDirectory}, nil
+	return &RootedFiles{root: root, scope: RootedFilesScope{Prefix: prefix}, syncDirectory: syncRootDirectory, fileOps: defaultRootedFileOps()}, nil
 }
 
 // RootedFilesFor opens a scoped rooted-file capability from a DALgo database
@@ -210,9 +223,6 @@ func (f *RootedFiles) Close() error {
 // platforms with file locking, cooperating RootedFiles readers and writers are
 // serialized around the complete line.
 func (f *RootedFiles) AppendJSONL(relativePath string, value any) error {
-	if !rootedFileLockingSupported() {
-		return errRootedFileLockUnsupported
-	}
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	relativePath, err := f.scopedRelativePath(relativePath)
@@ -237,15 +247,15 @@ func (f *RootedFiles) AppendJSONL(relativePath string, value any) error {
 	if err != nil {
 		return fmt.Errorf("dalgo2ingitdb: open JSONL append %q: %w", relativePath, err)
 	}
-	defer func() { _ = file.Close() }()
+	defer func() { _ = f.fileOps.close(file) }()
 	return withRootedExclusiveFileLock(file, func() error {
-		if err := recoverJSONLTail(file, relativePath); err != nil {
+		if err := recoverJSONLTail(file, relativePath, f.fileOps); err != nil {
 			return err
 		}
-		if _, err := file.Write(content); err != nil {
+		if _, err := f.fileOps.write(file, content); err != nil {
 			return fmt.Errorf("dalgo2ingitdb: append JSONL %q: %w", relativePath, err)
 		}
-		if err := file.Sync(); err != nil {
+		if err := f.fileOps.sync(file); err != nil {
 			return fmt.Errorf("dalgo2ingitdb: sync JSONL %q: %w", relativePath, err)
 		}
 		// Even when an earlier writer created the file, a crash after that
@@ -261,9 +271,6 @@ func (f *RootedFiles) AppendJSONL(relativePath string, value any) error {
 // ReadJSONL returns each non-blank JSON object from relativePath in file
 // order. The returned values are independent copies of the on-disk lines.
 func (f *RootedFiles) ReadJSONL(relativePath string) ([]json.RawMessage, error) {
-	if !rootedFileLockingSupported() {
-		return nil, errRootedFileLockUnsupported
-	}
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	relativePath, err := f.scopedRelativePath(relativePath)
@@ -274,10 +281,10 @@ func (f *RootedFiles) ReadJSONL(relativePath string) ([]json.RawMessage, error) 
 	if err != nil {
 		return nil, fmt.Errorf("dalgo2ingitdb: open JSONL read %q: %w", relativePath, err)
 	}
-	defer func() { _ = file.Close() }()
+	defer func() { _ = f.fileOps.close(file) }()
 	var records []json.RawMessage
 	err = withRootedSharedFileLock(file, func() error {
-		content, readErr := io.ReadAll(file)
+		content, readErr := f.fileOps.readAll(file)
 		if readErr != nil {
 			return fmt.Errorf("dalgo2ingitdb: read JSONL %q: %w", relativePath, readErr)
 		}
@@ -309,6 +316,21 @@ func (f *RootedFiles) ReadJSONL(relativePath string) ([]json.RawMessage, error) 
 // projection writers; callers that need a sequence contract must serialize at
 // their mutation boundary.
 func (f *RootedFiles) WriteJSONAtomic(relativePath string, value any) (err error) {
+	return f.writeJSONAtomic(relativePath, value, 0o644)
+}
+
+// WriteJSONAtomicWithMode serializes value and atomically publishes it at
+// relativePath with the requested Unix permission bits. It is intended for
+// callers whose records have a stricter storage classification than the
+// default public projection mode used by WriteJSONAtomic.
+func (f *RootedFiles) WriteJSONAtomicWithMode(relativePath string, value any, mode os.FileMode) error {
+	if mode&^os.FileMode(0o777) != 0 {
+		return fmt.Errorf("dalgo2ingitdb: JSON file mode %v contains non-permission bits", mode)
+	}
+	return f.writeJSONAtomic(relativePath, value, mode)
+}
+
+func (f *RootedFiles) writeJSONAtomic(relativePath string, value any, mode os.FileMode) (err error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	relativePath, err = f.scopedRelativePath(relativePath)
@@ -325,18 +347,16 @@ func (f *RootedFiles) WriteJSONAtomic(relativePath string, value any) (err error
 		f.creationMu.Unlock()
 		return err
 	}
-	root, err := f.rootHandle()
-	if err != nil {
-		f.creationMu.Unlock()
-		return err
-	}
+	// mkdirParent succeeded while mu is read-locked, so Close cannot clear
+	// this descriptor before publication completes.
+	root := f.root
 	dir, base := path.Dir(relativePath), path.Base(relativePath)
-	tempPath, err := rootedTemporaryPath(dir, base)
+	tempPath, err := rootedTemporaryPath(dir, base, f.fileOps.randomRead)
 	if err != nil {
 		f.creationMu.Unlock()
 		return err
 	}
-	file, err := f.openFile(tempPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	file, err := f.openFile(tempPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	f.creationMu.Unlock()
 	if err != nil {
 		return fmt.Errorf("dalgo2ingitdb: create JSON temporary file %q: %w", tempPath, err)
@@ -346,15 +366,15 @@ func (f *RootedFiles) WriteJSONAtomic(relativePath string, value any) (err error
 			_ = root.Remove(tempPath)
 		}
 	}()
-	if _, err := file.Write(content); err != nil {
-		_ = file.Close()
+	if _, err := f.fileOps.write(file, content); err != nil {
+		_ = f.fileOps.close(file)
 		return fmt.Errorf("dalgo2ingitdb: write JSON temporary file %q: %w", tempPath, err)
 	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
+	if err := f.fileOps.sync(file); err != nil {
+		_ = f.fileOps.close(file)
 		return fmt.Errorf("dalgo2ingitdb: sync JSON temporary file %q: %w", tempPath, err)
 	}
-	if err := file.Close(); err != nil {
+	if err := f.fileOps.close(file); err != nil {
 		return fmt.Errorf("dalgo2ingitdb: close JSON temporary file %q: %w", tempPath, err)
 	}
 	if err := root.Rename(tempPath, relativePath); err != nil {
@@ -388,6 +408,79 @@ func (f *RootedFiles) ReadJSON(relativePath string, target any) error {
 	return nil
 }
 
+// WithExclusiveLock runs fn while holding an advisory exclusive lock on a
+// scoped relative file. It releases the capability's lifecycle lock before fn
+// runs, so fn can safely call other RootedFiles methods. The lock remains held
+// until fn returns or ctx is cancelled while waiting to acquire it.
+func (f *RootedFiles) WithExclusiveLock(ctx context.Context, relativePath string, fn func() error) error {
+	if fn == nil {
+		return errors.New("dalgo2ingitdb: rooted files lock callback is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f.mu.RLock()
+	relativePath, err := f.scopedRelativePath(relativePath)
+	if err != nil {
+		f.mu.RUnlock()
+		return err
+	}
+	f.creationMu.Lock()
+	err = f.mkdirParent(relativePath)
+	var file *os.File
+	created := false
+	if err == nil {
+		root, rootErr := f.rootHandle()
+		if rootErr != nil {
+			err = rootErr
+		} else {
+			_, statErr := root.Stat(relativePath)
+			created = errors.Is(statErr, fs.ErrNotExist)
+			if statErr != nil && !created {
+				err = fmt.Errorf("stat rooted lock %q: %w", relativePath, statErr)
+			} else {
+				file, err = f.openFile(relativePath, os.O_CREATE|os.O_RDWR, 0o600)
+			}
+		}
+	}
+	f.creationMu.Unlock()
+	if err == nil && created {
+		err = f.syncDir(path.Dir(relativePath))
+	}
+	f.mu.RUnlock()
+	if err != nil {
+		return fmt.Errorf("dalgo2ingitdb: open rooted exclusive lock %q: %w", relativePath, err)
+	}
+	defer func() { _ = f.fileOps.close(file) }()
+	return withRootedExclusiveFileLockContext(ctx, file, fn)
+}
+
+// ReadDir returns the entries directly below a scoped relative directory.
+func (f *RootedFiles) ReadDir(relativePath string) ([]os.DirEntry, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	relativePath, err := f.scopedRelativePath(relativePath)
+	if err != nil {
+		return nil, err
+	}
+	root, err := f.rootHandle()
+	if err != nil {
+		return nil, err
+	}
+	dir, err := root.Open(relativePath)
+	if err != nil {
+		return nil, fmt.Errorf("dalgo2ingitdb: open rooted directory %q: %w", relativePath, err)
+	}
+	entries, readErr := dir.ReadDir(-1)
+	if closeErr := dir.Close(); readErr == nil {
+		readErr = closeErr
+	}
+	if readErr != nil {
+		return nil, fmt.Errorf("dalgo2ingitdb: read rooted directory %q: %w", relativePath, readErr)
+	}
+	return entries, nil
+}
+
 func (f *RootedFiles) openFile(relativePath string, flag int, perm os.FileMode) (*os.File, error) {
 	root, err := f.rootHandle()
 	if err != nil {
@@ -406,10 +499,7 @@ func (f *RootedFiles) openJSONLAppendFile(relativePath string) (*os.File, bool, 
 		if err := f.mkdirParent(relativePath); err != nil {
 			return nil, false, err
 		}
-		root, err := f.rootHandle()
-		if err != nil {
-			return nil, false, err
-		}
+		root := f.root
 		_, statErr := root.Stat(relativePath)
 		created := errors.Is(statErr, os.ErrNotExist)
 		if statErr != nil && !created {
@@ -535,11 +625,11 @@ func ensureRealRootedScope(root *os.Root, prefix string) (os.FileInfo, error) {
 // record is committed only after its terminating newline has been synced. A
 // malformed line that has a newline is already committed bytes and therefore
 // fails rather than being silently rewritten.
-func recoverJSONLTail(file *os.File, relativePath string) error {
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
+func recoverJSONLTail(file *os.File, relativePath string, ops rootedFileOps) error {
+	if _, err := ops.seek(file, 0, io.SeekStart); err != nil {
 		return fmt.Errorf("dalgo2ingitdb: seek JSONL %q for recovery: %w", relativePath, err)
 	}
-	content, err := io.ReadAll(file)
+	content, err := ops.readAll(file)
 	if err != nil {
 		return fmt.Errorf("dalgo2ingitdb: read JSONL %q for recovery: %w", relativePath, err)
 	}
@@ -558,14 +648,14 @@ func recoverJSONLTail(file *os.File, relativePath string) error {
 		}
 	}
 	if len(committed) != len(content) {
-		if err := file.Truncate(int64(len(committed))); err != nil {
+		if err := ops.truncate(file, int64(len(committed))); err != nil {
 			return fmt.Errorf("dalgo2ingitdb: truncate interrupted JSONL tail at %q: %w", relativePath, err)
 		}
-		if err := file.Sync(); err != nil {
+		if err := ops.sync(file); err != nil {
 			return fmt.Errorf("dalgo2ingitdb: sync recovered JSONL %q: %w", relativePath, err)
 		}
 	}
-	if _, err := file.Seek(0, io.SeekEnd); err != nil {
+	if _, err := ops.seek(file, 0, io.SeekEnd); err != nil {
 		return fmt.Errorf("dalgo2ingitdb: seek JSONL %q for append: %w", relativePath, err)
 	}
 	return nil
@@ -582,9 +672,9 @@ func rootedRelativePath(value string) (string, error) {
 	return clean, nil
 }
 
-func rootedTemporaryPath(dir, base string) (string, error) {
+func rootedTemporaryPath(dir, base string, randomRead func([]byte) (int, error)) (string, error) {
 	var random [12]byte
-	if _, err := rand.Read(random[:]); err != nil {
+	if _, err := randomRead(random[:]); err != nil {
 		return "", fmt.Errorf("dalgo2ingitdb: generate temporary JSON file suffix: %w", err)
 	}
 	return path.Join(dir, "."+base+".tmp-"+hex.EncodeToString(random[:])), nil
