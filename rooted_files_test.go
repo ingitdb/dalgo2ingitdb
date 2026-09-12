@@ -85,9 +85,9 @@ func TestRootedFilesWriteAndReadJSON(t *testing.T) {
 func TestRootedFilesScopedLockCanCallOtherOperations(t *testing.T) {
 	_, files := openIncidentFiles(t)
 	called := false
-	if err := files.WithExclusiveLock(context.Background(), ".store/lock", func() error {
+	if err := files.WithExclusiveLock(context.Background(), ".store/lock", func(locked LockedFiles) error {
 		called = true
-		return files.AppendJSONL("INC-1/events.jsonl", map[string]any{"seq": 1})
+		return locked.AppendJSONL("INC-1/events.jsonl", map[string]any{"seq": 1})
 	}); err != nil {
 		t.Fatalf("WithExclusiveLock: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestRootedFilesScopedLockHonorsContext(t *testing.T) {
 	release := make(chan struct{})
 	holderDone := make(chan error, 1)
 	go func() {
-		holderDone <- files.WithExclusiveLock(context.Background(), ".store/lock", func() error {
+		holderDone <- files.WithExclusiveLock(context.Background(), ".store/lock", func(LockedFiles) error {
 			close(entered)
 			<-release
 			return nil
@@ -146,7 +146,7 @@ func TestRootedFilesScopedLockHonorsContext(t *testing.T) {
 	<-entered
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
 	defer cancel()
-	if err := files.WithExclusiveLock(ctx, ".store/lock", func() error { return nil }); !errors.Is(err, context.DeadlineExceeded) {
+	if err := files.WithExclusiveLock(ctx, ".store/lock", func(LockedFiles) error { return nil }); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("waiting lock error = %v, want deadline exceeded", err)
 	}
 	close(release)
@@ -611,7 +611,7 @@ func TestRootedFilesCloseWaitsForActiveOperation(t *testing.T) {
 	if _, err := files.ReadDir("."); err == nil {
 		t.Fatal("ReadDir after Close: want error")
 	}
-	if err := files.WithExclusiveLock(context.Background(), ".store/lock", func() error { return nil }); err == nil {
+	if err := files.WithExclusiveLock(context.Background(), ".store/lock", func(LockedFiles) error { return nil }); err == nil {
 		t.Fatal("WithExclusiveLock after Close: want error")
 	}
 }
@@ -622,27 +622,50 @@ func TestRootedFilesCloseWaitsForLockCallbackAndAllowsNestedOperations(t *testin
 	startNested := make(chan struct{})
 	lockDone := make(chan error, 1)
 	go func() {
-		lockDone <- files.WithExclusiveLock(context.Background(), ".store/lock", func() error {
+		lockDone <- files.WithExclusiveLock(context.Background(), ".store/lock", func(locked LockedFiles) error {
 			close(callbackEntered)
 			<-startNested
-			if err := files.AppendJSONL("INC-1/events.jsonl", map[string]any{"seq": 1}); err != nil {
+			if err := locked.AppendJSONL("INC-1/events.jsonl", map[string]any{"seq": 1}); err != nil {
 				return err
 			}
-			if _, err := files.ReadJSONL("INC-1/events.jsonl"); err != nil {
+			if _, err := locked.ReadJSONL("INC-1/events.jsonl"); err != nil {
 				return err
 			}
-			if err := files.WriteJSONAtomic("INC-1/incident.json", map[string]any{"seq": 1}); err != nil {
+			if err := locked.WriteJSONAtomic("INC-1/incident.json", map[string]any{"seq": 1}); err != nil {
 				return err
 			}
-			return files.ReadJSON("INC-1/incident.json", &map[string]any{})
+			if err := locked.ReadJSON("INC-1/incident.json", &map[string]any{}); err != nil {
+				return err
+			}
+			if err := locked.WriteJSONAtomicWithMode(".store/receipt.json", map[string]any{"seq": 1}, 0o600); err != nil {
+				return err
+			}
+			_, err := locked.ReadDir(".store")
+			return err
 		})
 	}()
 	<-callbackEntered
 	closeDone := make(chan error, 1)
 	go func() { closeDone <- files.Close() }()
 	waitForRootedFilesCloseDrain(t, files)
-	if err := files.WithExclusiveLock(context.Background(), ".store/second-lock", func() error { return nil }); err == nil {
+	if err := files.WithExclusiveLock(context.Background(), ".store/second-lock", func(LockedFiles) error { return nil }); err == nil {
 		t.Fatal("new top-level lock was admitted while Close drained callback")
+	}
+	for _, operation := range []struct {
+		name string
+		run  func() error
+	}{
+		{name: "append", run: func() error { return files.AppendJSONL("INC-unrelated/events.jsonl", map[string]any{"seq": 1}) }},
+		{name: "event read", run: func() error { _, err := files.ReadJSONL("INC-1/events.jsonl"); return err }},
+		{name: "projection write", run: func() error { return files.WriteJSONAtomic("INC-unrelated/incident.json", map[string]any{"seq": 1}) }},
+		{name: "projection read", run: func() error { return files.ReadJSON("INC-1/incident.json", &map[string]any{}) }},
+		{name: "directory read", run: func() error { _, err := files.ReadDir("."); return err }},
+	} {
+		result := make(chan error, 1)
+		go func() { result <- operation.run() }()
+		if err := <-result; !errors.Is(err, errRootedFilesClosed) {
+			t.Errorf("unrelated %s while Close drained callback = %v, want closed", operation.name, err)
+		}
 	}
 	select {
 	case err := <-closeDone:
@@ -658,13 +681,95 @@ func TestRootedFilesCloseWaitsForLockCallbackAndAllowsNestedOperations(t *testin
 	}
 }
 
+func TestLockedFilesHandleFailsClosedAfterCallback(t *testing.T) {
+	_, files := openIncidentFiles(t)
+	var escaped LockedFiles
+	if err := files.WithExclusiveLock(context.Background(), ".store/lock", func(locked LockedFiles) error {
+		escaped = locked
+		if err := locked.AppendJSONL("INC-1/events.jsonl", map[string]any{"seq": 1}); err != nil {
+			return err
+		}
+		if err := locked.WriteJSONAtomicWithMode(".store/receipt.json", map[string]any{}, os.ModeDir|0o600); err == nil {
+			return errors.New("locked files accepted non-permission mode")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, operation := range []struct {
+		name string
+		run  func() error
+	}{
+		{name: "append", run: func() error { return escaped.AppendJSONL("INC-1/events.jsonl", map[string]any{"seq": 2}) }},
+		{name: "event read", run: func() error { _, err := escaped.ReadJSONL("INC-1/events.jsonl"); return err }},
+		{name: "projection write", run: func() error { return escaped.WriteJSONAtomic("INC-1/incident.json", map[string]any{}) }},
+		{name: "projection mode write", run: func() error { return escaped.WriteJSONAtomicWithMode("INC-1/incident.json", map[string]any{}, 0o600) }},
+		{name: "projection read", run: func() error { return escaped.ReadJSON("INC-1/incident.json", &map[string]any{}) }},
+		{name: "directory read", run: func() error { _, err := escaped.ReadDir("."); return err }},
+	} {
+		if err := operation.run(); !errors.Is(err, errLockedFilesExpired) {
+			t.Errorf("escaped %s = %v, want expired callback handle", operation.name, err)
+		}
+	}
+}
+
+func TestRootedFilesCloseCannotStarveOnNewOrdinaryOperations(t *testing.T) {
+	_, files := openIncidentFiles(t)
+	callbackEntered := make(chan struct{})
+	releaseCallback := make(chan struct{})
+	lockDone := make(chan error, 1)
+	go func() {
+		lockDone <- files.WithExclusiveLock(context.Background(), ".store/lock", func(LockedFiles) error {
+			close(callbackEntered)
+			<-releaseCallback
+			return nil
+		})
+	}()
+	<-callbackEntered
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- files.Close() }()
+	waitForRootedFilesCloseDrain(t, files)
+	stopAttempts := make(chan struct{})
+	attemptsDone := make(chan error, 1)
+	go func() {
+		for {
+			select {
+			case <-stopAttempts:
+				attemptsDone <- nil
+				return
+			default:
+				if _, err := files.ReadDir("."); !errors.Is(err, errRootedFilesClosed) {
+					attemptsDone <- err
+					return
+				}
+			}
+		}
+	}()
+	close(releaseCallback)
+	if err := <-lockDone; err != nil {
+		t.Fatalf("lock callback: %v", err)
+	}
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close starved behind new ordinary operations")
+	}
+	close(stopAttempts)
+	if err := <-attemptsDone; err != nil {
+		t.Fatalf("ordinary operation was admitted while draining: %v", err)
+	}
+}
+
 func TestRootedFilesCloseWaitsForLockWaitingOnFlock(t *testing.T) {
 	_, files := openIncidentFiles(t)
 	holderEntered := make(chan struct{})
 	releaseHolder := make(chan struct{})
 	holderDone := make(chan error, 1)
 	go func() {
-		holderDone <- files.WithExclusiveLock(context.Background(), ".store/lock", func() error {
+		holderDone <- files.WithExclusiveLock(context.Background(), ".store/lock", func(LockedFiles) error {
 			close(holderEntered)
 			<-releaseHolder
 			return nil
@@ -675,9 +780,9 @@ func TestRootedFilesCloseWaitsForLockWaitingOnFlock(t *testing.T) {
 	releaseWaiter := make(chan struct{})
 	waiterDone := make(chan error, 1)
 	go func() {
-		waiterDone <- files.WithExclusiveLock(context.Background(), ".store/lock", func() error {
+		waiterDone <- files.WithExclusiveLock(context.Background(), ".store/lock", func(locked LockedFiles) error {
 			close(waiterEntered)
-			if err := files.AppendJSONL("INC-1/events.jsonl", map[string]any{"seq": 1}); err != nil {
+			if err := locked.AppendJSONL("INC-1/events.jsonl", map[string]any{"seq": 1}); err != nil {
 				return err
 			}
 			<-releaseWaiter
@@ -728,7 +833,7 @@ func TestRootedFilesExclusiveLockClosesFileWhenInitialParentSyncFails(t *testing
 		}
 		return syncRootDirectory(root, relativePath)
 	}
-	if err := files.WithExclusiveLock(context.Background(), ".store/lock", func() error {
+	if err := files.WithExclusiveLock(context.Background(), ".store/lock", func(LockedFiles) error {
 		t.Fatal("lock callback ran after initial parent sync failure")
 		return nil
 	}); !errors.Is(err, sentinel) {
@@ -758,10 +863,10 @@ func TestRootedFilesOperationFailurePaths(t *testing.T) {
 	}
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := files.WithExclusiveLock(cancelled, ".store/lock", func() error { return nil }); !errors.Is(err, context.Canceled) {
+	if err := files.WithExclusiveLock(cancelled, ".store/lock", func(LockedFiles) error { return nil }); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled WithExclusiveLock = %v, want context canceled", err)
 	}
-	if err := files.WithExclusiveLock(context.Background(), "../escape", func() error { return nil }); err == nil {
+	if err := files.WithExclusiveLock(context.Background(), "../escape", func(LockedFiles) error { return nil }); err == nil {
 		t.Fatal("WithExclusiveLock accepted escaping path")
 	}
 	sentinel := errors.New("injected mkdir sync failure")
@@ -776,7 +881,7 @@ func TestRootedFilesPrivateClosedFailurePaths(t *testing.T) {
 		t.Fatal("openFile accepted absent root")
 	}
 	var nilFiles *RootedFiles
-	if err := nilFiles.beginOperation(true); err == nil {
+	if err := nilFiles.beginOperation(); err == nil {
 		t.Fatal("nil RootedFiles accepted operation")
 	}
 	root, err := os.OpenRoot(t.TempDir())

@@ -43,9 +43,95 @@ type RootedFiles struct {
 	closing       bool
 	closed        bool
 	operations    int
-	callbacks     int
 	syncDirectory func(*os.Root, string) error
 	fileOps       rootedFileOps
+}
+
+var (
+	errRootedFilesClosed  = errors.New("dalgo2ingitdb: rooted files is closed")
+	errLockedFilesExpired = errors.New("dalgo2ingitdb: rooted files lock callback has ended")
+)
+
+// LockedFiles is the callback-scoped view supplied by WithExclusiveLock. It
+// may perform ordinary rooted-file operations while the store-wide lock is
+// held, including while Close is draining that callback. The view is
+// invalidated before WithExclusiveLock returns; retaining it beyond the
+// callback fails closed.
+type LockedFiles interface {
+	AppendJSONL(relativePath string, value any) error
+	ReadJSONL(relativePath string) ([]json.RawMessage, error)
+	WriteJSONAtomic(relativePath string, value any) error
+	WriteJSONAtomicWithMode(relativePath string, value any, mode os.FileMode) error
+	ReadJSON(relativePath string, target any) error
+	ReadDir(relativePath string) ([]os.DirEntry, error)
+}
+
+// lockedFiles serializes access through an explicitly time-bounded callback
+// token. It intentionally does not infer callback ownership from goroutine
+// identity or a global state: ordinary RootedFiles methods remain closed to
+// new work as soon as Close begins draining.
+type lockedFiles struct {
+	files  *RootedFiles
+	mu     sync.Mutex
+	active bool
+}
+
+func (l *lockedFiles) AppendJSONL(relativePath string, value any) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.active {
+		return errLockedFilesExpired
+	}
+	return l.files.appendJSONL(relativePath, value)
+}
+
+func (l *lockedFiles) ReadJSONL(relativePath string) ([]json.RawMessage, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.active {
+		return nil, errLockedFilesExpired
+	}
+	return l.files.readJSONL(relativePath)
+}
+
+func (l *lockedFiles) WriteJSONAtomic(relativePath string, value any) error {
+	return l.WriteJSONAtomicWithMode(relativePath, value, 0o644)
+}
+
+func (l *lockedFiles) WriteJSONAtomicWithMode(relativePath string, value any, mode os.FileMode) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.active {
+		return errLockedFilesExpired
+	}
+	if mode&^os.FileMode(0o777) != 0 {
+		return fmt.Errorf("dalgo2ingitdb: JSON file mode %v contains non-permission bits", mode)
+	}
+	return l.files.writeJSONAtomicLocked(relativePath, value, mode)
+}
+
+func (l *lockedFiles) ReadJSON(relativePath string, target any) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.active {
+		return errLockedFilesExpired
+	}
+	return l.files.readJSON(relativePath, target)
+}
+
+func (l *lockedFiles) ReadDir(relativePath string) ([]os.DirEntry, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.active {
+		return nil, errLockedFilesExpired
+	}
+	return l.files.readDir(relativePath)
+}
+
+func (l *lockedFiles) invalidate() {
+	l.mu.Lock()
+	l.active = false
+	l.mu.Unlock()
 }
 
 // rootedFileOps is deliberately private and per capability. It gives focused
@@ -242,10 +328,14 @@ func (f *RootedFiles) Close() error {
 // platforms with file locking, cooperating RootedFiles readers and writers are
 // serialized around the complete line.
 func (f *RootedFiles) AppendJSONL(relativePath string, value any) error {
-	if err := f.beginOperation(true); err != nil {
+	if err := f.beginOperation(); err != nil {
 		return err
 	}
 	defer f.endOperation()
+	return f.appendJSONL(relativePath, value)
+}
+
+func (f *RootedFiles) appendJSONL(relativePath string, value any) error {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	relativePath, err := f.scopedRelativePath(relativePath)
@@ -294,10 +384,14 @@ func (f *RootedFiles) AppendJSONL(relativePath string, value any) error {
 // ReadJSONL returns each non-blank JSON object from relativePath in file
 // order. The returned values are independent copies of the on-disk lines.
 func (f *RootedFiles) ReadJSONL(relativePath string) ([]json.RawMessage, error) {
-	if err := f.beginOperation(true); err != nil {
+	if err := f.beginOperation(); err != nil {
 		return nil, err
 	}
 	defer f.endOperation()
+	return f.readJSONL(relativePath)
+}
+
+func (f *RootedFiles) readJSONL(relativePath string) ([]json.RawMessage, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	relativePath, err := f.scopedRelativePath(relativePath)
@@ -358,10 +452,14 @@ func (f *RootedFiles) WriteJSONAtomicWithMode(relativePath string, value any, mo
 }
 
 func (f *RootedFiles) writeJSONAtomic(relativePath string, value any, mode os.FileMode) (err error) {
-	if err := f.beginOperation(true); err != nil {
+	if err := f.beginOperation(); err != nil {
 		return err
 	}
 	defer f.endOperation()
+	return f.writeJSONAtomicLocked(relativePath, value, mode)
+}
+
+func (f *RootedFiles) writeJSONAtomicLocked(relativePath string, value any, mode os.FileMode) (err error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	relativePath, err = f.scopedRelativePath(relativePath)
@@ -419,10 +517,14 @@ func (f *RootedFiles) writeJSONAtomic(relativePath string, value any, mode os.Fi
 
 // ReadJSON decodes the JSON document at relativePath into target.
 func (f *RootedFiles) ReadJSON(relativePath string, target any) error {
-	if err := f.beginOperation(true); err != nil {
+	if err := f.beginOperation(); err != nil {
 		return err
 	}
 	defer f.endOperation()
+	return f.readJSON(relativePath, target)
+}
+
+func (f *RootedFiles) readJSON(relativePath string, target any) error {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	relativePath, err := f.scopedRelativePath(relativePath)
@@ -445,20 +547,18 @@ func (f *RootedFiles) ReadJSON(relativePath string, target any) error {
 
 // WithExclusiveLock runs fn while holding an advisory exclusive lock on a
 // scoped relative file. Its operation lease remains live across fn, so Close
-// waits for the callback while nested RootedFiles operations remain safe. The
-// lock remains held until fn returns or ctx is cancelled while waiting to
-// acquire it.
-func (f *RootedFiles) WithExclusiveLock(ctx context.Context, relativePath string, fn func() error) error {
+// waits for the callback. fn receives the only callback-scoped view that may
+// operate while Close drains; the view is invalid when fn returns. The lock
+// remains held until fn returns or ctx is cancelled while waiting to acquire
+// it.
+func (f *RootedFiles) WithExclusiveLock(ctx context.Context, relativePath string, fn func(LockedFiles) error) error {
 	if fn == nil {
 		return errors.New("dalgo2ingitdb: rooted files lock callback is required")
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	// A lock is always a top-level operation. In contrast, the ordinary file
-	// operations below may re-enter from an already-running lock callback while
-	// Close is draining it.
-	if err := f.beginOperation(false); err != nil {
+	if err := f.beginOperation(); err != nil {
 		return err
 	}
 	defer f.endOperation()
@@ -499,19 +599,23 @@ func (f *RootedFiles) WithExclusiveLock(ctx context.Context, relativePath string
 	if err != nil {
 		return fmt.Errorf("dalgo2ingitdb: open rooted exclusive lock %q: %w", relativePath, err)
 	}
+	locked := &lockedFiles{files: f, active: true}
 	return withRootedExclusiveFileLockContext(ctx, file, func() error {
-		f.enterCallback()
-		defer f.exitCallback()
-		return fn()
+		defer locked.invalidate()
+		return fn(locked)
 	})
 }
 
 // ReadDir returns the entries directly below a scoped relative directory.
 func (f *RootedFiles) ReadDir(relativePath string) ([]os.DirEntry, error) {
-	if err := f.beginOperation(true); err != nil {
+	if err := f.beginOperation(); err != nil {
 		return nil, err
 	}
 	defer f.endOperation()
+	return f.readDir(relativePath)
+}
+
+func (f *RootedFiles) readDir(relativePath string) ([]os.DirEntry, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	relativePath, err := f.scopedRelativePath(relativePath)
@@ -639,19 +743,14 @@ func syncRootDirectory(root *os.Root, relativePath string) error {
 // beginOperation obtains a lifecycle lease before taking mu. Close first marks
 // the capability draining and then waits for all leases, so it cannot close the
 // descriptor between a caller dropping mu and acquiring an advisory flock.
-//
-// A callback entered through WithExclusiveLock is already protected by an
-// outer lease. Its ordinary nested file calls are admitted while Close drains;
-// otherwise they could be blocked by RWMutex writer preference. New lock
-// callbacks are never admitted once draining has begun.
-func (f *RootedFiles) beginOperation(allowLockCallbackReentry bool) error {
+func (f *RootedFiles) beginOperation() error {
 	if f == nil {
-		return errors.New("dalgo2ingitdb: rooted files is closed")
+		return errRootedFilesClosed
 	}
 	f.lifecycleMu.Lock()
 	defer f.lifecycleMu.Unlock()
-	if f.closed || (f.closing && (!allowLockCallbackReentry || f.callbacks == 0)) {
-		return errors.New("dalgo2ingitdb: rooted files is closed")
+	if f.closed || f.closing {
+		return errRootedFilesClosed
 	}
 	f.operations++
 	return nil
@@ -666,21 +765,6 @@ func (f *RootedFiles) endOperation() {
 	f.lifecycleMu.Unlock()
 }
 
-func (f *RootedFiles) enterCallback() {
-	f.lifecycleMu.Lock()
-	f.callbacks++
-	f.lifecycleMu.Unlock()
-}
-
-func (f *RootedFiles) exitCallback() {
-	f.lifecycleMu.Lock()
-	f.callbacks--
-	if f.callbacks == 0 {
-		f.lifecycleConditionLocked().Broadcast()
-	}
-	f.lifecycleMu.Unlock()
-}
-
 func (f *RootedFiles) lifecycleConditionLocked() *sync.Cond {
 	if f.lifecycleCond == nil {
 		f.lifecycleCond = sync.NewCond(&f.lifecycleMu)
@@ -690,7 +774,7 @@ func (f *RootedFiles) lifecycleConditionLocked() *sync.Cond {
 
 func (f *RootedFiles) rootHandle() (*os.Root, error) {
 	if f == nil || f.root == nil {
-		return nil, errors.New("dalgo2ingitdb: rooted files is closed")
+		return nil, errRootedFilesClosed
 	}
 	return f.root, nil
 }
