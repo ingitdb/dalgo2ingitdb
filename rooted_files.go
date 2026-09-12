@@ -24,10 +24,11 @@ import (
 // cannot be represented by DALgo's keyed-record API, such as an append-only
 // JSONL event stream.
 //
-// Every path is relative to the authorized scope below the opened project
-// root. RootedFiles rejects an escaping path before handing it to os.Root, and
-// os.Root keeps the opened directory stable when the original root pathname is
-// renamed or replaced. Call Close when the capability is no longer needed.
+// Every path is relative to the authorized scope, which is itself the opened
+// descriptor root. RootedFiles rejects an escaping path before handing it to
+// os.Root, and os.Root keeps the opened directory stable when the original
+// root pathname is renamed or replaced. Call Close when the capability is no
+// longer needed.
 type RootedFiles struct {
 	root          *os.Root
 	scope         RootedFilesScope
@@ -124,9 +125,17 @@ func openRootedFiles(projectPath string, scope RootedFilesScope) (*RootedFiles, 
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return nil, fmt.Errorf("dalgo2ingitdb: rooted files root must be a real directory")
 	}
-	root, err := os.OpenRoot(abs)
+	projectRoot, err := os.OpenRoot(abs)
 	if err != nil {
 		return nil, fmt.Errorf("dalgo2ingitdb: open rooted files root: %w", err)
+	}
+	defer func() { _ = projectRoot.Close() }()
+	if err := ensureRealRootedScope(projectRoot, prefix); err != nil {
+		return nil, err
+	}
+	root, err := projectRoot.OpenRoot(prefix)
+	if err != nil {
+		return nil, fmt.Errorf("dalgo2ingitdb: open rooted files scope %q: %w", prefix, err)
 	}
 	return &RootedFiles{root: root, scope: RootedFilesScope{Prefix: prefix}, syncDirectory: syncRootDirectory}, nil
 }
@@ -188,7 +197,7 @@ func (f *RootedFiles) AppendJSONL(relativePath string, value any) error {
 	// setup atomic for one RootedFiles handle; the file descriptor lock below
 	// continues to coordinate append publication.
 	f.creationMu.Lock()
-	file, created, err := f.openJSONLAppendFile(relativePath)
+	file, _, err := f.openJSONLAppendFile(relativePath)
 	f.creationMu.Unlock()
 	if err != nil {
 		return fmt.Errorf("dalgo2ingitdb: open JSONL append %q: %w", relativePath, err)
@@ -204,10 +213,11 @@ func (f *RootedFiles) AppendJSONL(relativePath string, value any) error {
 		if err := file.Sync(); err != nil {
 			return fmt.Errorf("dalgo2ingitdb: sync JSONL %q: %w", relativePath, err)
 		}
-		if created {
-			if err := f.syncDir(path.Dir(relativePath)); err != nil {
-				return err
-			}
+		// Even when an earlier writer created the file, a crash after that
+		// writer's file sync but before its directory sync leaves the parent
+		// entry vulnerable. Every successful append closes that window.
+		if err := f.syncDir(path.Dir(relativePath)); err != nil {
+			return err
 		}
 		return nil
 	})
@@ -454,15 +464,56 @@ func (f *RootedFiles) rootHandle() (*os.Root, error) {
 }
 
 func (f *RootedFiles) scopedRelativePath(relativePath string) (string, error) {
-	relativePath, err := rootedRelativePath(relativePath)
-	if err != nil {
-		return "", err
+	return rootedRelativePath(relativePath)
+}
+
+// ensureRealRootedScope creates a configured scope if needed, but refuses a
+// symlink at every scope component. Once OpenRoot below has opened that real
+// directory, descendants cannot resolve through a symlink outside the scope.
+func ensureRealRootedScope(root *os.Root, prefix string) error {
+	current := ""
+	for _, segment := range strings.Split(prefix, "/") {
+		parent := current
+		if current == "" {
+			current = segment
+		} else {
+			current = path.Join(current, segment)
+		}
+		info, err := root.Lstat(current)
+		if errors.Is(err, fs.ErrNotExist) {
+			err = root.Mkdir(current, 0o755)
+			if err != nil && !errors.Is(err, fs.ErrExist) {
+				return fmt.Errorf("dalgo2ingitdb: create rooted files scope %q: %w", current, err)
+			}
+			if errors.Is(err, fs.ErrExist) {
+				info, err = root.Lstat(current)
+				if err != nil {
+					return fmt.Errorf("dalgo2ingitdb: inspect raced rooted files scope %q: %w", current, err)
+				}
+				if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+					return fmt.Errorf("dalgo2ingitdb: raced rooted files scope component %q must be a real directory", current)
+				}
+				continue
+			}
+			if parent == "" {
+				parent = "."
+			}
+			if err := syncRootDirectory(root, parent); err != nil {
+				return fmt.Errorf("dalgo2ingitdb: sync rooted files scope parent %q: %w", parent, err)
+			}
+			if err := syncRootDirectory(root, current); err != nil {
+				return fmt.Errorf("dalgo2ingitdb: sync rooted files scope %q: %w", current, err)
+			}
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("dalgo2ingitdb: inspect rooted files scope %q: %w", current, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return fmt.Errorf("dalgo2ingitdb: rooted files scope component %q must be a real directory", current)
+		}
 	}
-	prefix, err := f.scope.validate()
-	if err != nil {
-		return "", err
-	}
-	return path.Join(prefix, relativePath), nil
+	return nil
 }
 
 // recoverJSONLTail removes only an uncommitted final partial line. A JSONL

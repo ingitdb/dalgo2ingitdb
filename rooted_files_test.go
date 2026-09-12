@@ -89,7 +89,7 @@ func TestRootedFilesSyncsEveryNewDirectoryLink(t *testing.T) {
 	if err := files.AppendJSONL("INC-1/events.jsonl", map[string]any{"seq": 1}); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{".", "incidents", "incidents", "incidents/INC-1", "incidents/INC-1"}
+	want := []string{".", "INC-1", "INC-1"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("directory sync sequence = %q, want %q", got, want)
 	}
@@ -170,6 +170,85 @@ func TestRootedFilesRejectsEscapingPathsAndNestedSymlink(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(outside, "events.jsonl")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("outside target was modified: %v", err)
 	}
+}
+
+func TestRootedFilesRejectsInProjectSymlinkOutsideAuthorizedScope(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".ingitdb"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "incidents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../.ingitdb", filepath.Join(root, "incidents", "INC-1")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	db, err := NewDatabase(root, newReader(), WithRootedFilesScopes(incidentScope))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := RootedFilesFor(context.Background(), db, incidentScope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = files.Close() })
+	for _, operation := range []struct {
+		name string
+		run  func() error
+	}{
+		{name: "append", run: func() error { return files.AppendJSONL("INC-1/events.jsonl", map[string]any{"seq": 1}) }},
+		{name: "projection", run: func() error { return files.WriteJSONAtomic("INC-1/incident.json", map[string]any{"seq": 1}) }},
+		{name: "event read", run: func() error { _, err := files.ReadJSONL("INC-1/events.jsonl"); return err }},
+		{name: "projection read", run: func() error { return files.ReadJSON("INC-1/incident.json", &map[string]any{}) }},
+	} {
+		t.Run(operation.name, func(t *testing.T) {
+			if err := operation.run(); err == nil {
+				t.Fatalf("%s followed in-project symlink outside scope", operation.name)
+			}
+		})
+	}
+	entries, err := os.ReadDir(filepath.Join(root, ".ingitdb"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("outside authorized scope was modified: %v", entries)
+	}
+}
+
+func TestRootedFilesRetrySyncsEventParentAfterPriorPostFileSyncFailure(t *testing.T) {
+	root, files := openIncidentFiles(t)
+	if err := os.Mkdir(filepath.Join(root, "incidents", "INC-retry"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var parentSyncs int
+	postFileSyncErr := errors.New("simulated crash after event file sync")
+	files.syncDirectory = func(root *os.Root, relativePath string) error {
+		if relativePath == "INC-retry" {
+			parentSyncs++
+			if parentSyncs == 1 {
+				return postFileSyncErr
+			}
+		}
+		return syncRootDirectory(root, relativePath)
+	}
+	if err := files.AppendJSONL("INC-retry/events.jsonl", map[string]any{"seq": 1}); !errors.Is(err, postFileSyncErr) {
+		t.Fatalf("first append = %v, want post-file-sync error", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "incidents", "INC-retry", "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `{"seq":1}`) {
+		t.Fatalf("event file was not synced before simulated crash: %q", raw)
+	}
+	if err := files.AppendJSONL("INC-retry/events.jsonl", map[string]any{"seq": 2}); err != nil {
+		t.Fatalf("retry append: %v", err)
+	}
+	if parentSyncs != 2 {
+		t.Fatalf("event parent sync attempts = %d, want 2", parentSyncs)
+	}
+	assertJSONLSeqs(t, files, "INC-retry/events.jsonl", []int{1, 2})
 }
 
 func TestRootedFilesTwoCapabilitiesSerializeConcurrentAppends(t *testing.T) {
@@ -454,27 +533,27 @@ func TestRootedFilesReadAndSyncFailures(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(physical, "directory.jsonl"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := files.openJSONLAppendFile("incidents/INC-1/directory.jsonl"); err == nil {
+	if _, _, err := files.openJSONLAppendFile("INC-1/directory.jsonl"); err == nil {
 		t.Fatal("JSONL append opened a directory")
 	}
 	if err := files.mkdirParent("file.json"); err != nil {
 		t.Fatalf("root-level parent: %v", err)
 	}
 	blockingRoot, blockingFiles := openIncidentFiles(t)
-	if err := os.WriteFile(filepath.Join(blockingRoot, "incidents"), []byte("not a directory"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(blockingRoot, "incidents", "blocked"), []byte("not a directory"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := blockingFiles.mkdirParent("incidents/INC-1/events.jsonl"); err == nil {
+	if err := blockingFiles.mkdirParent("blocked/INC-1/events.jsonl"); err == nil {
 		t.Fatal("file accepted as a parent directory")
 	}
 	childSyncErr := errors.New("child directory sync failed")
 	files.syncDirectory = func(root *os.Root, relativePath string) error {
-		if relativePath == "incidents/INC-child" {
+		if relativePath == "INC-child" {
 			return childSyncErr
 		}
 		return syncRootDirectory(root, relativePath)
 	}
-	if err := files.mkdirParent("incidents/INC-child/events.jsonl"); !errors.Is(err, childSyncErr) {
+	if err := files.mkdirParent("INC-child/events.jsonl"); !errors.Is(err, childSyncErr) {
 		t.Fatalf("child directory sync error = %v, want %v", err, childSyncErr)
 	}
 	files.syncDirectory = syncRootDirectory
