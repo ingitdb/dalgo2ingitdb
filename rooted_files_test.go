@@ -343,14 +343,21 @@ func TestRootedFilesEnsureDirPreservesPrivateModeAndSyncsNewLinks(t *testing.T) 
 		t.Fatal("EnsureDir accepted multi-segment path")
 	}
 	outside := t.TempDir()
+	if err := os.Chmod(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Symlink(outside, filepath.Join(root, "incidents", "symlinked-private")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 	if err := files.EnsureDir("symlinked-private", 0o700); err == nil {
 		t.Fatal("EnsureDir followed top-level symlink")
 	}
-	if _, err := os.Stat(filepath.Join(outside, "child")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("EnsureDir modified symlink target: %v", err)
+	outsideInfo, err := os.Stat(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := outsideInfo.Mode().Perm(); mode != 0o755 {
+		t.Fatalf("EnsureDir modified symlink target mode to %o, want 755", mode)
 	}
 }
 
