@@ -10,6 +10,7 @@ require (
 	github.com/gofrs/flock v0.13.0
 	github.com/ingitdb/ingitdb-go/ingitdb v0.5.2
 	github.com/ingr-io/ingr-go v0.0.2
+	golang.org/x/sys v0.47.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -24,5 +25,4 @@ require (
 	github.com/strongo/validation v0.0.13 // indirect
 	go.starlark.net v0.0.0-20260708150628-5395d018f003 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/sys v0.47.0 // indirect
 )

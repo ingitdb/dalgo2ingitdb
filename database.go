@@ -61,8 +61,9 @@ type Database struct {
 }
 
 type databaseOptions struct {
-	storedOnlyReads  bool
-	protectedProfile bool
+	storedOnlyReads   bool
+	protectedProfile  bool
+	rootedFilesScopes []RootedFilesScope
 }
 
 // WithProtectedProfile exposes the trusted coordinator factory used by a
@@ -81,6 +82,17 @@ type DatabaseOption func(*databaseOptions)
 // adapter and cannot authorize every dependency used by a derived value.
 func WithStoredOnlyReads() DatabaseOption {
 	return func(options *databaseOptions) { options.storedOnlyReads = true }
+}
+
+// WithRootedFilesScopes explicitly permits a legacy, unprotected server mount
+// to issue descriptor-rooted file capabilities limited to the supplied
+// prefixes. Protected and secured database facades deliberately do not forward
+// this capability: their record ACLs have no path-level semantics for raw
+// files.
+func WithRootedFilesScopes(scopes ...RootedFilesScope) DatabaseOption {
+	return func(options *databaseOptions) {
+		options.rootedFilesScopes = append([]RootedFilesScope(nil), scopes...)
+	}
 }
 
 // NewDatabase constructs a Database rooted at projectPath. The reader is
@@ -124,7 +136,7 @@ func NewDatabase(projectPath string, reader ingitdb.CollectionsReader, options .
 			writer, _ := dal.As[dal.WriteSession](db)
 			return &protectedFactoryDatabase{protectedDatabase: protectedDatabase{DB: db, schema: backend, backend: backend, writer: writer}, SchemaModifier: backend}, nil
 		}
-		return db, nil
+		return wrapRootedFilesDatabase(db, backend, settings.rootedFilesScopes)
 	}
 	backend.storedOnlyReads = true
 	policies, err := access.LoadPolicyFiles(filepath.Join(projectPath, accessConfigDir), config)
