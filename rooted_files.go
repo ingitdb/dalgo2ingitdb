@@ -39,9 +39,10 @@ type RootedFiles struct {
 
 var errRootedFileLockUnsupported = errors.New("dalgo2ingitdb: rooted file locking is not supported on this platform")
 
-// RootedFilesScope is an explicitly authorized directory prefix for raw
-// inGitDB files. It is configured by a trusted server mount, not accepted from
-// an untrusted request.
+// RootedFilesScope is an explicitly authorized, top-level directory for raw
+// inGitDB files. The MVP intentionally supports exactly one clean path segment
+// (for example, "incidents"), configured by a trusted server mount rather than
+// accepted from an untrusted request.
 type RootedFilesScope struct {
 	Prefix string
 }
@@ -50,6 +51,9 @@ func (s RootedFilesScope) validate() (string, error) {
 	prefix, err := rootedRelativePath(s.Prefix)
 	if err != nil {
 		return "", fmt.Errorf("dalgo2ingitdb: rooted files scope: %w", err)
+	}
+	if strings.Contains(prefix, "/") {
+		return "", fmt.Errorf("dalgo2ingitdb: rooted files scope %q must be one top-level path segment", s.Prefix)
 	}
 	return prefix, nil
 }
@@ -111,6 +115,12 @@ func openRootedFiles(projectPath string, scope RootedFilesScope) (*RootedFiles, 
 // openRootedFilesWith keeps the scope-open operation injectable for a
 // deterministic check of the verify/open swap boundary.
 func openRootedFilesWith(projectPath string, scope RootedFilesScope, openScope func(*os.Root, string) (*os.Root, error)) (*RootedFiles, error) {
+	return openRootedFilesWithProject(projectPath, scope, os.OpenRoot, openScope)
+}
+
+// openRootedFilesWithProject keeps the project-root open operation injectable
+// for a deterministic check of the project verify/open swap boundary.
+func openRootedFilesWithProject(projectPath string, scope RootedFilesScope, openProject func(string) (*os.Root, error), openScope func(*os.Root, string) (*os.Root, error)) (*RootedFiles, error) {
 	if !rootedFileLockingSupported() {
 		return nil, errRootedFileLockUnsupported
 	}
@@ -126,18 +136,25 @@ func openRootedFilesWith(projectPath string, scope RootedFilesScope, openScope f
 		return nil, fmt.Errorf("dalgo2ingitdb: absolute rooted files path: %w", err)
 	}
 	abs = filepath.Clean(abs)
-	info, err := os.Lstat(abs)
+	verifiedProject, err := os.Lstat(abs)
 	if err != nil {
 		return nil, fmt.Errorf("dalgo2ingitdb: rooted files root: %w", err)
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+	if verifiedProject.Mode()&os.ModeSymlink != 0 || !verifiedProject.IsDir() {
 		return nil, fmt.Errorf("dalgo2ingitdb: rooted files root must be a real directory")
 	}
-	projectRoot, err := os.OpenRoot(abs)
+	projectRoot, err := openProject(abs)
 	if err != nil {
 		return nil, fmt.Errorf("dalgo2ingitdb: open rooted files root: %w", err)
 	}
 	defer func() { _ = projectRoot.Close() }()
+	openedProject, err := projectRoot.Stat(".")
+	if err != nil {
+		return nil, fmt.Errorf("dalgo2ingitdb: stat opened rooted files root: %w", err)
+	}
+	if !os.SameFile(verifiedProject, openedProject) {
+		return nil, errors.New("dalgo2ingitdb: rooted files root changed during acquisition")
+	}
 	verifiedScope, err := ensureRealRootedScope(projectRoot, prefix)
 	if err != nil {
 		return nil, err
@@ -489,55 +506,29 @@ func (f *RootedFiles) scopedRelativePath(relativePath string) (string, error) {
 // symlink at every scope component. Once OpenRoot below has opened that real
 // directory, descendants cannot resolve through a symlink outside the scope.
 func ensureRealRootedScope(root *os.Root, prefix string) (os.FileInfo, error) {
-	current := ""
-	var final os.FileInfo
-	for _, segment := range strings.Split(prefix, "/") {
-		parent := current
-		if current == "" {
-			current = segment
-		} else {
-			current = path.Join(current, segment)
+	info, err := root.Lstat(prefix)
+	if errors.Is(err, fs.ErrNotExist) {
+		err = root.Mkdir(prefix, 0o755)
+		if err != nil && !errors.Is(err, fs.ErrExist) {
+			return nil, fmt.Errorf("dalgo2ingitdb: create rooted files scope %q: %w", prefix, err)
 		}
-		info, err := root.Lstat(current)
-		if errors.Is(err, fs.ErrNotExist) {
-			err = root.Mkdir(current, 0o755)
-			if err != nil && !errors.Is(err, fs.ErrExist) {
-				return nil, fmt.Errorf("dalgo2ingitdb: create rooted files scope %q: %w", current, err)
+		if err == nil {
+			if err := syncRootDirectory(root, "."); err != nil {
+				return nil, fmt.Errorf("dalgo2ingitdb: sync rooted files scope parent: %w", err)
 			}
-			if errors.Is(err, fs.ErrExist) {
-				info, err = root.Lstat(current)
-				if err != nil {
-					return nil, fmt.Errorf("dalgo2ingitdb: inspect raced rooted files scope %q: %w", current, err)
-				}
-				if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-					return nil, fmt.Errorf("dalgo2ingitdb: raced rooted files scope component %q must be a real directory", current)
-				}
-				final = info
-				continue
-			}
-			if parent == "" {
-				parent = "."
-			}
-			if err := syncRootDirectory(root, parent); err != nil {
-				return nil, fmt.Errorf("dalgo2ingitdb: sync rooted files scope parent %q: %w", parent, err)
-			}
-			if err := syncRootDirectory(root, current); err != nil {
-				return nil, fmt.Errorf("dalgo2ingitdb: sync rooted files scope %q: %w", current, err)
-			}
-			info, err = root.Lstat(current)
-			if err != nil {
-				return nil, fmt.Errorf("dalgo2ingitdb: inspect created rooted files scope %q: %w", current, err)
+			if err := syncRootDirectory(root, prefix); err != nil {
+				return nil, fmt.Errorf("dalgo2ingitdb: sync rooted files scope %q: %w", prefix, err)
 			}
 		}
-		if err != nil {
-			return nil, fmt.Errorf("dalgo2ingitdb: inspect rooted files scope %q: %w", current, err)
-		}
-		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-			return nil, fmt.Errorf("dalgo2ingitdb: rooted files scope component %q must be a real directory", current)
-		}
-		final = info
+		info, err = root.Lstat(prefix)
 	}
-	return final, nil
+	if err != nil {
+		return nil, fmt.Errorf("dalgo2ingitdb: inspect rooted files scope %q: %w", prefix, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return nil, fmt.Errorf("dalgo2ingitdb: rooted files scope %q must be a real directory", prefix)
+	}
+	return info, nil
 }
 
 // recoverJSONLTail removes only an uncommitted final partial line. A JSONL

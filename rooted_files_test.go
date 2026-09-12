@@ -246,6 +246,52 @@ func TestRootedFilesRejectsScopeSwapDuringAcquisition(t *testing.T) {
 	}
 }
 
+func TestRootedFilesRejectsProjectRootSwapDuringAcquisition(t *testing.T) {
+	parent := t.TempDir()
+	project := filepath.Join(parent, "project")
+	replacement := filepath.Join(parent, "replacement")
+	if err := os.Mkdir(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(replacement, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files, err := openRootedFilesWithProject(project, incidentScope, func(path string) (*os.Root, error) {
+		if err := os.Rename(path, filepath.Join(parent, "project-verified")); err != nil {
+			return nil, err
+		}
+		if err := os.Symlink(replacement, path); err != nil {
+			return nil, err
+		}
+		return os.OpenRoot(path)
+	}, func(root *os.Root, prefix string) (*os.Root, error) {
+		return root.OpenRoot(prefix)
+	})
+	if err == nil {
+		_ = files.Close()
+		t.Fatal("project acquisition accepted swapped root")
+	}
+	for _, unchanged := range []string{filepath.Join(parent, "project-verified"), replacement} {
+		entries, readErr := os.ReadDir(unchanged)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("project acquisition mutated %q: %v", unchanged, entries)
+		}
+	}
+}
+
+func TestRootedFilesScopeRejectsMultiSegmentPrefix(t *testing.T) {
+	multiSegment := RootedFilesScope{Prefix: "incidents/archive"}
+	if _, err := multiSegment.validate(); err == nil {
+		t.Fatal("multi-segment scope prefix accepted")
+	}
+	if _, err := NewDatabase(t.TempDir(), newReader(), WithRootedFilesScopes(multiSegment)); err == nil {
+		t.Fatal("database accepted multi-segment rooted-files scope")
+	}
+}
+
 func TestRootedFilesKeepsOpenedScopeAcrossScopePathSwap(t *testing.T) {
 	root, files := openIncidentFiles(t)
 	if err := os.Mkdir(filepath.Join(root, ".ingitdb"), 0o755); err != nil {
