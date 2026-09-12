@@ -351,14 +351,18 @@ func (f *RootedFiles) AppendJSONL(relativePath string, value any) error {
 	return f.appendJSONL(relativePath, value)
 }
 
-// EnsureDir creates a scoped directory tree with mode, or sets the requested
-// mode on existing directories. Every newly-created link is synced with its
-// parent so private store metadata can survive a crash without a raw filesystem
-// handle.
-// mode may contain Unix permission bits only.
+// EnsureDir creates one scoped top-level directory with mode, or sets the
+// requested mode on that directory if it already exists. The one-segment
+// contract avoids a multi-component pathname acquisition race. A new link and
+// its parent are synced so private store metadata can survive a crash without
+// a raw filesystem handle. mode may contain Unix permission bits only and must
+// permit owner traversal.
 func (f *RootedFiles) EnsureDir(relativePath string, mode os.FileMode) error {
 	if mode&^os.FileMode(0o777) != 0 {
 		return fmt.Errorf("dalgo2ingitdb: rooted directory mode %v contains non-permission bits", mode)
+	}
+	if mode.Perm()&0o100 == 0 {
+		return fmt.Errorf("dalgo2ingitdb: rooted directory mode %v must include owner execute", mode)
 	}
 	if err := f.beginOperation(); err != nil {
 		return err
@@ -370,73 +374,64 @@ func (f *RootedFiles) EnsureDir(relativePath string, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
+	if strings.Contains(relativePath, "/") {
+		return fmt.Errorf("dalgo2ingitdb: rooted directory %q must be one top-level path segment", relativePath)
+	}
 	f.creationMu.Lock()
 	defer f.creationMu.Unlock()
-	return f.ensureDirTree(relativePath, mode)
+	return f.ensureTopLevelDir(relativePath, mode)
 }
 
-func (f *RootedFiles) ensureDirTree(relativePath string, mode os.FileMode) error {
+func (f *RootedFiles) ensureTopLevelDir(relativePath string, mode os.FileMode) error {
 	root, err := f.rootHandle()
 	if err != nil {
 		return err
 	}
-	current := ""
-	for _, segment := range strings.Split(relativePath, "/") {
-		parent := current
-		if current == "" {
-			current = segment
-		} else {
-			current = path.Join(current, segment)
+	created := false
+	info, statErr := root.Lstat(relativePath)
+	if errors.Is(statErr, fs.ErrNotExist) {
+		mkdirErr := root.Mkdir(relativePath, mode)
+		if mkdirErr != nil && !errors.Is(mkdirErr, fs.ErrExist) {
+			return fmt.Errorf("dalgo2ingitdb: create rooted directory %q: %w", relativePath, mkdirErr)
 		}
-		created := false
-		info, statErr := root.Lstat(current)
-		if errors.Is(statErr, fs.ErrNotExist) {
-			mkdirErr := root.Mkdir(current, mode)
-			if mkdirErr != nil && !errors.Is(mkdirErr, fs.ErrExist) {
-				return fmt.Errorf("dalgo2ingitdb: create rooted directory %q: %w", current, mkdirErr)
-			}
-			created = mkdirErr == nil
-			info, statErr = root.Lstat(current)
+		created = mkdirErr == nil
+		info, statErr = root.Lstat(relativePath)
+	}
+	if statErr != nil {
+		return fmt.Errorf("dalgo2ingitdb: inspect rooted directory %q: %w", relativePath, statErr)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("dalgo2ingitdb: rooted directory %q must be a real directory", relativePath)
+	}
+	dir, err := root.Open(relativePath)
+	if err != nil {
+		return fmt.Errorf("dalgo2ingitdb: open rooted directory %q: %w", relativePath, err)
+	}
+	dirInfo, statErr := dir.Stat()
+	if statErr == nil && !os.SameFile(info, dirInfo) {
+		statErr = errors.New("rooted directory changed during acquisition")
+	}
+	modeChanged := false
+	if statErr == nil && dirInfo.Mode().Perm() != mode.Perm() {
+		statErr = dir.Chmod(mode)
+		modeChanged = statErr == nil
+	}
+	if closeErr := dir.Close(); statErr == nil {
+		statErr = closeErr
+	}
+	if statErr != nil {
+		return fmt.Errorf("dalgo2ingitdb: set rooted directory mode %q: %w", relativePath, statErr)
+	}
+	if created {
+		if err := f.syncDir("."); err != nil {
+			return err
 		}
-		if statErr != nil {
-			return fmt.Errorf("dalgo2ingitdb: inspect rooted directory %q: %w", current, statErr)
+		if err := f.syncDir(relativePath); err != nil {
+			return err
 		}
-		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-			return fmt.Errorf("dalgo2ingitdb: rooted directory %q must be a real directory", current)
-		}
-		dir, err := root.Open(current)
-		if err != nil {
-			return fmt.Errorf("dalgo2ingitdb: open rooted directory %q: %w", current, err)
-		}
-		dirInfo, statErr := dir.Stat()
-		if statErr == nil && !os.SameFile(info, dirInfo) {
-			statErr = errors.New("rooted directory changed during acquisition")
-		}
-		modeChanged := false
-		if statErr == nil && dirInfo.Mode().Perm() != mode.Perm() {
-			statErr = dir.Chmod(mode)
-			modeChanged = statErr == nil
-		}
-		if closeErr := dir.Close(); statErr == nil {
-			statErr = closeErr
-		}
-		if statErr != nil {
-			return fmt.Errorf("dalgo2ingitdb: set rooted directory mode %q: %w", current, statErr)
-		}
-		if created {
-			if parent == "" {
-				parent = "."
-			}
-			if err := f.syncDir(parent); err != nil {
-				return err
-			}
-			if err := f.syncDir(current); err != nil {
-				return err
-			}
-		} else if modeChanged {
-			if err := f.syncDir(current); err != nil {
-				return err
-			}
+	} else if modeChanged {
+		if err := f.syncDir(relativePath); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -498,9 +493,11 @@ func (f *RootedFiles) ReadJSONL(relativePath string) ([]json.RawMessage, error) 
 	return f.readJSONL(relativePath, -1)
 }
 
-// ReadJSONLWithLimit reads and decodes a JSONL stream without allocating more
-// than maxBytes for its contents. maxBytes must be positive. Like ReadJSONL,
-// this public read is non-mutating and refuses an interrupted final line.
+// ReadJSONLWithLimit reads and decodes a JSONL stream whose returned content
+// buffer capacity never exceeds maxBytes, without preallocating a huge
+// maxBytes buffer for a tiny stream. maxBytes must be positive. Like
+// ReadJSONL, this public read is non-mutating and refuses an interrupted final
+// line.
 func (f *RootedFiles) ReadJSONLWithLimit(relativePath string, maxBytes int64) ([]json.RawMessage, error) {
 	if _, err := rootedJSONLBufferSize(maxBytes); err != nil {
 		return nil, err

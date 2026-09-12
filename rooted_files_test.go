@@ -293,19 +293,17 @@ func TestRootedFilesEnsureDirPreservesPrivateModeAndSyncsNewLinks(t *testing.T) 
 		syncs = append(syncs, relativePath)
 		return syncRootDirectory(root, relativePath)
 	}
-	if err := files.EnsureDir(".store/mutations", 0o700); err != nil {
+	if err := files.EnsureDir(".store", 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for _, relativePath := range []string{".store", ".store/mutations"} {
-		info, err := os.Stat(filepath.Join(root, "incidents", relativePath))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if mode := info.Mode().Perm(); mode != 0o700 {
-			t.Fatalf("%s mode = %o, want 700", relativePath, mode)
-		}
+	info, err := os.Stat(filepath.Join(root, "incidents", ".store"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	wantSyncs := []string{".", ".store", ".store", ".store/mutations"}
+	if mode := info.Mode().Perm(); mode != 0o700 {
+		t.Fatalf(".store mode = %o, want 700", mode)
+	}
+	wantSyncs := []string{".", ".store"}
 	if strings.Join(syncs, "|") != strings.Join(wantSyncs, "|") {
 		t.Fatalf("EnsureDir sync sequence = %q, want %q", syncs, wantSyncs)
 	}
@@ -315,17 +313,17 @@ func TestRootedFilesEnsureDirPreservesPrivateModeAndSyncsNewLinks(t *testing.T) 
 	if err := files.EnsureDir(".store", 0o700); err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(filepath.Join(root, "incidents", ".store"))
+	info, err = os.Stat(filepath.Join(root, "incidents", ".store"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if mode := info.Mode().Perm(); mode != 0o700 {
 		t.Fatalf("existing private directory mode = %o, want 700", mode)
 	}
-	if err := files.EnsureDir(".store/mutations", 0o755); err != nil {
+	if err := files.EnsureDir(".store", 0o755); err != nil {
 		t.Fatal(err)
 	}
-	info, err = os.Stat(filepath.Join(root, "incidents", ".store", "mutations"))
+	info, err = os.Stat(filepath.Join(root, "incidents", ".store"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,12 +333,21 @@ func TestRootedFilesEnsureDirPreservesPrivateModeAndSyncsNewLinks(t *testing.T) 
 	if err := files.EnsureDir(".store", os.ModeDir|0o700); err == nil {
 		t.Fatal("EnsureDir accepted non-permission mode bits")
 	}
+	if err := files.EnsureDir("private", 0o600); err == nil {
+		t.Fatal("EnsureDir accepted non-traversable directory mode")
+	}
+	if _, err := os.Stat(filepath.Join(root, "incidents", "private")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("EnsureDir created non-traversable directory: %v", err)
+	}
+	if err := files.EnsureDir(".store/mutations", 0o700); err == nil {
+		t.Fatal("EnsureDir accepted multi-segment path")
+	}
 	outside := t.TempDir()
 	if err := os.Symlink(outside, filepath.Join(root, "incidents", "symlinked-private")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if err := files.EnsureDir("symlinked-private/child", 0o700); err == nil {
-		t.Fatal("EnsureDir followed nested symlink")
+	if err := files.EnsureDir("symlinked-private", 0o700); err == nil {
+		t.Fatal("EnsureDir followed top-level symlink")
 	}
 	if _, err := os.Stat(filepath.Join(outside, "child")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("EnsureDir modified symlink target: %v", err)
