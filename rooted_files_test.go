@@ -286,6 +286,67 @@ func TestRootedFilesSyncsEveryNewDirectoryLink(t *testing.T) {
 	}
 }
 
+func TestRootedFilesEnsureDirPreservesPrivateModeAndSyncsNewLinks(t *testing.T) {
+	root, files := openIncidentFiles(t)
+	var syncs []string
+	files.syncDirectory = func(root *os.Root, relativePath string) error {
+		syncs = append(syncs, relativePath)
+		return syncRootDirectory(root, relativePath)
+	}
+	if err := files.EnsureDir(".store/mutations", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, relativePath := range []string{".store", ".store/mutations"} {
+		info, err := os.Stat(filepath.Join(root, "incidents", relativePath))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mode := info.Mode().Perm(); mode != 0o700 {
+			t.Fatalf("%s mode = %o, want 700", relativePath, mode)
+		}
+	}
+	wantSyncs := []string{".", ".store", ".store", ".store/mutations"}
+	if strings.Join(syncs, "|") != strings.Join(wantSyncs, "|") {
+		t.Fatalf("EnsureDir sync sequence = %q, want %q", syncs, wantSyncs)
+	}
+	if err := os.Chmod(filepath.Join(root, "incidents", ".store"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := files.EnsureDir(".store", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(root, "incidents", ".store"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o700 {
+		t.Fatalf("existing private directory mode = %o, want 700", mode)
+	}
+	if err := files.EnsureDir(".store/mutations", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	info, err = os.Stat(filepath.Join(root, "incidents", ".store", "mutations"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o755 {
+		t.Fatalf("existing directory mode = %o, want exact 755", mode)
+	}
+	if err := files.EnsureDir(".store", os.ModeDir|0o700); err == nil {
+		t.Fatal("EnsureDir accepted non-permission mode bits")
+	}
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "incidents", "symlinked-private")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := files.EnsureDir("symlinked-private/child", 0o700); err == nil {
+		t.Fatal("EnsureDir followed nested symlink")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "child")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("EnsureDir modified symlink target: %v", err)
+	}
+}
+
 func TestRootedFilesRecoversOnlyUnterminatedTail(t *testing.T) {
 	root, files := openIncidentFiles(t)
 	const eventPath = "INC-1/events.jsonl"
@@ -417,6 +478,11 @@ func TestReadJSONLContentHonorsExactAllocationCap(t *testing.T) {
 			}
 		})
 	}
+	grownInput := strings.Repeat("x", rootedJSONLInitialReadCapacity+904)
+	grown, err := readJSONLContent(bytes.NewReader([]byte(grownInput)), ops, int64(len(grownInput)))
+	if err != nil || len(grown) != len(grownInput) || cap(grown) > len(grownInput) {
+		t.Fatalf("grown bounded content = len %d cap %d err %v", len(grown), cap(grown), err)
+	}
 	if size, err := rootedJSONLBufferSizeWithMax(7, 7); err != nil || size != 7 {
 		t.Fatalf("exact synthetic max = %d, %v", size, err)
 	}
@@ -429,6 +495,15 @@ func TestReadJSONLContentHonorsExactAllocationCap(t *testing.T) {
 	platformMax := int64(^uint(0) >> 1)
 	if size, err := rootedJSONLBufferSize(platformMax); err != nil || int64(size) != platformMax {
 		t.Fatalf("platform max conversion = %d, %v", size, err)
+	}
+	for _, input := range []string{"", "x"} {
+		content, err := readJSONLContent(bytes.NewReader([]byte(input)), ops, platformMax)
+		if err != nil {
+			t.Fatalf("huge limit tiny input %q: %v", input, err)
+		}
+		if cap(content) > rootedJSONLInitialReadCapacity {
+			t.Fatalf("huge limit tiny input %q allocated capacity %d, want <= %d", input, cap(content), rootedJSONLInitialReadCapacity)
+		}
 	}
 }
 

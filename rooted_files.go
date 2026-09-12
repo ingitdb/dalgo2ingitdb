@@ -351,6 +351,97 @@ func (f *RootedFiles) AppendJSONL(relativePath string, value any) error {
 	return f.appendJSONL(relativePath, value)
 }
 
+// EnsureDir creates a scoped directory tree with mode, or sets the requested
+// mode on existing directories. Every newly-created link is synced with its
+// parent so private store metadata can survive a crash without a raw filesystem
+// handle.
+// mode may contain Unix permission bits only.
+func (f *RootedFiles) EnsureDir(relativePath string, mode os.FileMode) error {
+	if mode&^os.FileMode(0o777) != 0 {
+		return fmt.Errorf("dalgo2ingitdb: rooted directory mode %v contains non-permission bits", mode)
+	}
+	if err := f.beginOperation(); err != nil {
+		return err
+	}
+	defer f.endOperation()
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	relativePath, err := f.scopedRelativePath(relativePath)
+	if err != nil {
+		return err
+	}
+	f.creationMu.Lock()
+	defer f.creationMu.Unlock()
+	return f.ensureDirTree(relativePath, mode)
+}
+
+func (f *RootedFiles) ensureDirTree(relativePath string, mode os.FileMode) error {
+	root, err := f.rootHandle()
+	if err != nil {
+		return err
+	}
+	current := ""
+	for _, segment := range strings.Split(relativePath, "/") {
+		parent := current
+		if current == "" {
+			current = segment
+		} else {
+			current = path.Join(current, segment)
+		}
+		created := false
+		info, statErr := root.Lstat(current)
+		if errors.Is(statErr, fs.ErrNotExist) {
+			mkdirErr := root.Mkdir(current, mode)
+			if mkdirErr != nil && !errors.Is(mkdirErr, fs.ErrExist) {
+				return fmt.Errorf("dalgo2ingitdb: create rooted directory %q: %w", current, mkdirErr)
+			}
+			created = mkdirErr == nil
+			info, statErr = root.Lstat(current)
+		}
+		if statErr != nil {
+			return fmt.Errorf("dalgo2ingitdb: inspect rooted directory %q: %w", current, statErr)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return fmt.Errorf("dalgo2ingitdb: rooted directory %q must be a real directory", current)
+		}
+		dir, err := root.Open(current)
+		if err != nil {
+			return fmt.Errorf("dalgo2ingitdb: open rooted directory %q: %w", current, err)
+		}
+		dirInfo, statErr := dir.Stat()
+		if statErr == nil && !os.SameFile(info, dirInfo) {
+			statErr = errors.New("rooted directory changed during acquisition")
+		}
+		modeChanged := false
+		if statErr == nil && dirInfo.Mode().Perm() != mode.Perm() {
+			statErr = dir.Chmod(mode)
+			modeChanged = statErr == nil
+		}
+		if closeErr := dir.Close(); statErr == nil {
+			statErr = closeErr
+		}
+		if statErr != nil {
+			return fmt.Errorf("dalgo2ingitdb: set rooted directory mode %q: %w", current, statErr)
+		}
+		if created {
+			if parent == "" {
+				parent = "."
+			}
+			if err := f.syncDir(parent); err != nil {
+				return err
+			}
+			if err := f.syncDir(current); err != nil {
+				return err
+			}
+		} else if modeChanged {
+			if err := f.syncDir(current); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (f *RootedFiles) appendJSONL(relativePath string, value any) error {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
@@ -939,24 +1030,27 @@ func readJSONLContent(reader io.Reader, ops rootedFileOps, maxBytes int64) ([]by
 	if maxBytes < 0 {
 		return ops.readAll(reader)
 	}
-	capacity, err := rootedJSONLBufferSize(maxBytes)
+	maxCapacity, err := rootedJSONLBufferSize(maxBytes)
 	if err != nil {
 		return nil, err
 	}
-	// Allocate exactly the caller's maximum content capacity. io.ReadAll is
-	// intentionally not used here: its geometric buffer growth can allocate
-	// more than the configured maximum even when wrapped in io.LimitReader.
-	content := make([]byte, capacity)
-	total := 0
-	for total < len(content) {
-		n, readErr := ops.read(reader, content[total:])
-		if n < 0 || n > len(content)-total {
+	content := make([]byte, 0, minRootedJSONLReadCapacity(maxCapacity))
+	for {
+		if len(content) == cap(content) {
+			if cap(content) == maxCapacity {
+				return probeRootedJSONLOverflow(reader, ops, content)
+			}
+			content = growRootedJSONLBuffer(content, maxCapacity)
+		}
+		available := cap(content) - len(content)
+		n, readErr := ops.read(reader, content[len(content):cap(content)])
+		if n < 0 || n > available {
 			return nil, errors.New("invalid JSONL reader byte count")
 		}
-		total += n
+		content = content[:len(content)+n]
 		if readErr != nil {
 			if errors.Is(readErr, io.EOF) {
-				return content[:total], nil
+				return content, nil
 			}
 			return nil, readErr
 		}
@@ -964,8 +1058,31 @@ func readJSONLContent(reader io.Reader, ops rootedFileOps, maxBytes int64) ([]by
 			return nil, io.ErrNoProgress
 		}
 	}
-	// Probe one byte without extending content. This distinguishes an exact
-	// max-sized file from an oversized one without a maxBytes+1 allocation.
+}
+
+const rootedJSONLInitialReadCapacity = 4096
+
+func minRootedJSONLReadCapacity(maxCapacity int) int {
+	if maxCapacity < rootedJSONLInitialReadCapacity {
+		return maxCapacity
+	}
+	return rootedJSONLInitialReadCapacity
+}
+
+func growRootedJSONLBuffer(content []byte, maxCapacity int) []byte {
+	current := cap(content)
+	growth := current
+	if growth > maxCapacity-current {
+		growth = maxCapacity - current
+	}
+	next := make([]byte, len(content), current+growth)
+	copy(next, content)
+	return next
+}
+
+// probeRootedJSONLOverflow distinguishes an exact max-sized stream from an
+// oversized one without extending content or allocating maxBytes+1 bytes.
+func probeRootedJSONLOverflow(reader io.Reader, ops rootedFileOps, content []byte) ([]byte, error) {
 	var extra [1]byte
 	n, readErr := ops.read(reader, extra[:])
 	if n < 0 || n > len(extra) {
