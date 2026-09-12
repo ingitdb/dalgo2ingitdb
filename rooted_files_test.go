@@ -3,6 +3,7 @@
 package dalgo2ingitdb
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -391,6 +392,43 @@ func TestRootedFilesJSONLReadLimitAndCommittedMalformedTail(t *testing.T) {
 	}
 	if string(after) != string(before) {
 		t.Fatalf("locked read rewrote malformed committed bytes: before=%q after=%q", before, after)
+	}
+}
+
+func TestReadJSONLContentHonorsExactAllocationCap(t *testing.T) {
+	ops := defaultRootedFileOps()
+	for _, tc := range []struct {
+		name    string
+		input   string
+		max     int64
+		wantErr error
+	}{
+		{name: "small exact", input: "x", max: 1},
+		{name: "near cap", input: "123456789012345", max: 16},
+		{name: "overflow", input: "xy", max: 1, wantErr: errJSONLMaxBytesExceeded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			content, err := readJSONLContent(bytes.NewReader([]byte(tc.input)), ops, tc.max)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("readJSONLContent error = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr == nil && cap(content) > int(tc.max) {
+				t.Fatalf("content capacity = %d, exceeds maximum %d", cap(content), tc.max)
+			}
+		})
+	}
+	if size, err := rootedJSONLBufferSizeWithMax(7, 7); err != nil || size != 7 {
+		t.Fatalf("exact synthetic max = %d, %v", size, err)
+	}
+	if _, err := rootedJSONLBufferSizeWithMax(8, 7); !errors.Is(err, errJSONLMaxBytesInvalid) {
+		t.Fatalf("synthetic overflow error = %v", err)
+	}
+	if _, err := rootedJSONLBufferSizeWithMax(0, 7); !errors.Is(err, errJSONLMaxBytesInvalid) {
+		t.Fatalf("zero maximum error = %v", err)
+	}
+	platformMax := int64(^uint(0) >> 1)
+	if size, err := rootedJSONLBufferSize(platformMax); err != nil || int64(size) != platformMax {
+		t.Fatalf("platform max conversion = %d, %v", size, err)
 	}
 }
 

@@ -51,6 +51,7 @@ var (
 	errRootedFilesClosed     = errors.New("dalgo2ingitdb: rooted files is closed")
 	errLockedFilesExpired    = errors.New("dalgo2ingitdb: rooted files lock callback has ended")
 	errJSONLMaxBytesExceeded = errors.New("dalgo2ingitdb: JSONL exceeds configured maximum bytes")
+	errJSONLMaxBytesInvalid  = errors.New("dalgo2ingitdb: JSONL maximum bytes is invalid")
 )
 
 // LockedFiles is the callback-scoped view supplied by WithExclusiveLock. It
@@ -92,8 +93,8 @@ func (l *lockedFiles) ReadJSONL(relativePath string) ([]json.RawMessage, error) 
 }
 
 func (l *lockedFiles) ReadJSONLWithLimit(relativePath string, maxBytes int64) ([]json.RawMessage, error) {
-	if maxBytes <= 0 {
-		return nil, fmt.Errorf("dalgo2ingitdb: JSONL maximum bytes must be positive")
+	if _, err := rootedJSONLBufferSize(maxBytes); err != nil {
+		return nil, err
 	}
 	return l.readJSONL(relativePath, maxBytes)
 }
@@ -410,8 +411,8 @@ func (f *RootedFiles) ReadJSONL(relativePath string) ([]json.RawMessage, error) 
 // than maxBytes for its contents. maxBytes must be positive. Like ReadJSONL,
 // this public read is non-mutating and refuses an interrupted final line.
 func (f *RootedFiles) ReadJSONLWithLimit(relativePath string, maxBytes int64) ([]json.RawMessage, error) {
-	if maxBytes <= 0 {
-		return nil, fmt.Errorf("dalgo2ingitdb: JSONL maximum bytes must be positive")
+	if _, err := rootedJSONLBufferSize(maxBytes); err != nil {
+		return nil, err
 	}
 	if err := f.beginOperation(); err != nil {
 		return nil, err
@@ -450,7 +451,12 @@ func (f *RootedFiles) readJSONL(relativePath string, maxBytes int64) ([]json.Raw
 // newline-terminated records immutable and reports them as an error.
 func (f *RootedFiles) recoverAndReadJSONL(relativePath string, maxBytes int64) ([]json.RawMessage, error) {
 	if maxBytes == 0 || maxBytes < -1 {
-		return nil, fmt.Errorf("dalgo2ingitdb: JSONL maximum bytes must be positive")
+		return nil, fmt.Errorf("%w: %d", errJSONLMaxBytesInvalid, maxBytes)
+	}
+	if maxBytes >= 0 {
+		if _, err := rootedJSONLBufferSize(maxBytes); err != nil {
+			return nil, err
+		}
 	}
 	f.mu.RLock()
 	defer f.mu.RUnlock()
@@ -929,29 +935,65 @@ func readJSONLRecords(file *os.File, relativePath string, ops rootedFileOps, max
 	return records, nil
 }
 
-func readJSONLContent(file *os.File, ops rootedFileOps, maxBytes int64) ([]byte, error) {
-	if maxBytes == 0 {
-		return nil, errors.New("JSONL maximum bytes must be positive")
+func readJSONLContent(reader io.Reader, ops rootedFileOps, maxBytes int64) ([]byte, error) {
+	if maxBytes < 0 {
+		return ops.readAll(reader)
 	}
-	reader := io.Reader(file)
-	if maxBytes > 0 {
-		reader = io.LimitReader(file, maxBytes)
-	}
-	content, err := ops.readAll(reader)
+	capacity, err := rootedJSONLBufferSize(maxBytes)
 	if err != nil {
 		return nil, err
 	}
-	if maxBytes > 0 && int64(len(content)) == maxBytes {
-		var extra [1]byte
-		n, readErr := ops.read(file, extra[:])
-		if n > 0 {
-			return nil, errJSONLMaxBytesExceeded
+	// Allocate exactly the caller's maximum content capacity. io.ReadAll is
+	// intentionally not used here: its geometric buffer growth can allocate
+	// more than the configured maximum even when wrapped in io.LimitReader.
+	content := make([]byte, capacity)
+	total := 0
+	for total < len(content) {
+		n, readErr := ops.read(reader, content[total:])
+		if n < 0 || n > len(content)-total {
+			return nil, errors.New("invalid JSONL reader byte count")
 		}
-		if readErr != nil && !errors.Is(readErr, io.EOF) {
+		total += n
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				return content[:total], nil
+			}
 			return nil, readErr
 		}
+		if n == 0 {
+			return nil, io.ErrNoProgress
+		}
+	}
+	// Probe one byte without extending content. This distinguishes an exact
+	// max-sized file from an oversized one without a maxBytes+1 allocation.
+	var extra [1]byte
+	n, readErr := ops.read(reader, extra[:])
+	if n < 0 || n > len(extra) {
+		return nil, errors.New("invalid JSONL reader byte count")
+	}
+	if n > 0 {
+		return nil, errJSONLMaxBytesExceeded
+	}
+	if readErr == nil {
+		return nil, io.ErrNoProgress
+	}
+	if !errors.Is(readErr, io.EOF) {
+		return nil, readErr
 	}
 	return content, nil
+}
+
+func rootedJSONLBufferSize(maxBytes int64) (int, error) {
+	return rootedJSONLBufferSizeWithMax(maxBytes, int64(^uint(0)>>1))
+}
+
+// rootedJSONLBufferSizeWithMax makes integer-boundary behavior deterministic
+// on every test platform without changing the production allocation limit.
+func rootedJSONLBufferSizeWithMax(maxBytes, maxInt int64) (int, error) {
+	if maxBytes <= 0 || maxInt <= 0 || maxBytes > maxInt {
+		return 0, fmt.Errorf("%w: %d", errJSONLMaxBytesInvalid, maxBytes)
+	}
+	return int(maxBytes), nil
 }
 
 func rootedRelativePath(value string) (string, error) {
