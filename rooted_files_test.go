@@ -333,11 +333,14 @@ func TestRootedFilesEnsureDirPreservesPrivateModeAndSyncsNewLinks(t *testing.T) 
 	if err := files.EnsureDir(".store", os.ModeDir|0o700); err == nil {
 		t.Fatal("EnsureDir accepted non-permission mode bits")
 	}
-	if err := files.EnsureDir("private", 0o600); err == nil {
-		t.Fatal("EnsureDir accepted non-traversable directory mode")
-	}
-	if _, err := os.Stat(filepath.Join(root, "incidents", "private")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("EnsureDir created non-traversable directory: %v", err)
+	for name, mode := range map[string]os.FileMode{"no-execute": 0o600, "execute-only": 0o100, "write-execute": 0o300} {
+		privatePath := "private-" + name
+		if err := files.EnsureDir(privatePath, mode); err == nil {
+			t.Fatalf("EnsureDir accepted unusable directory mode %o", mode)
+		}
+		if _, err := os.Stat(filepath.Join(root, "incidents", privatePath)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("EnsureDir created unusable directory %q: %v", privatePath, err)
+		}
 	}
 	if err := files.EnsureDir(".store/mutations", 0o700); err == nil {
 		t.Fatal("EnsureDir accepted multi-segment path")

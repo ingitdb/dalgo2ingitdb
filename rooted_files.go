@@ -356,13 +356,13 @@ func (f *RootedFiles) AppendJSONL(relativePath string, value any) error {
 // contract avoids a multi-component pathname acquisition race. A new link and
 // its parent are synced so private store metadata can survive a crash without
 // a raw filesystem handle. mode may contain Unix permission bits only and must
-// permit owner traversal.
+// permit owner read and traversal.
 func (f *RootedFiles) EnsureDir(relativePath string, mode os.FileMode) error {
 	if mode&^os.FileMode(0o777) != 0 {
 		return fmt.Errorf("dalgo2ingitdb: rooted directory mode %v contains non-permission bits", mode)
 	}
-	if mode.Perm()&0o100 == 0 {
-		return fmt.Errorf("dalgo2ingitdb: rooted directory mode %v must include owner execute", mode)
+	if mode.Perm()&0o500 != 0o500 {
+		return fmt.Errorf("dalgo2ingitdb: rooted directory mode %v must include owner read and execute", mode)
 	}
 	if err := f.beginOperation(); err != nil {
 		return err
