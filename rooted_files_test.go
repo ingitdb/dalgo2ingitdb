@@ -608,6 +608,202 @@ func TestRootedFilesCloseWaitsForActiveOperation(t *testing.T) {
 	if err := files.AppendJSONL("INC-1/events.jsonl", map[string]any{"seq": 2}); err == nil {
 		t.Fatal("AppendJSONL after Close: want error")
 	}
+	if _, err := files.ReadDir("."); err == nil {
+		t.Fatal("ReadDir after Close: want error")
+	}
+	if err := files.WithExclusiveLock(context.Background(), ".store/lock", func() error { return nil }); err == nil {
+		t.Fatal("WithExclusiveLock after Close: want error")
+	}
+}
+
+func TestRootedFilesCloseWaitsForLockCallbackAndAllowsNestedOperations(t *testing.T) {
+	_, files := openIncidentFiles(t)
+	callbackEntered := make(chan struct{})
+	startNested := make(chan struct{})
+	lockDone := make(chan error, 1)
+	go func() {
+		lockDone <- files.WithExclusiveLock(context.Background(), ".store/lock", func() error {
+			close(callbackEntered)
+			<-startNested
+			if err := files.AppendJSONL("INC-1/events.jsonl", map[string]any{"seq": 1}); err != nil {
+				return err
+			}
+			if _, err := files.ReadJSONL("INC-1/events.jsonl"); err != nil {
+				return err
+			}
+			if err := files.WriteJSONAtomic("INC-1/incident.json", map[string]any{"seq": 1}); err != nil {
+				return err
+			}
+			return files.ReadJSON("INC-1/incident.json", &map[string]any{})
+		})
+	}()
+	<-callbackEntered
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- files.Close() }()
+	waitForRootedFilesCloseDrain(t, files)
+	if err := files.WithExclusiveLock(context.Background(), ".store/second-lock", func() error { return nil }); err == nil {
+		t.Fatal("new top-level lock was admitted while Close drained callback")
+	}
+	select {
+	case err := <-closeDone:
+		t.Fatalf("Close returned while lock callback was active: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(startNested)
+	if err := <-lockDone; err != nil {
+		t.Fatalf("lock callback nested operations: %v", err)
+	}
+	if err := <-closeDone; err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestRootedFilesCloseWaitsForLockWaitingOnFlock(t *testing.T) {
+	_, files := openIncidentFiles(t)
+	holderEntered := make(chan struct{})
+	releaseHolder := make(chan struct{})
+	holderDone := make(chan error, 1)
+	go func() {
+		holderDone <- files.WithExclusiveLock(context.Background(), ".store/lock", func() error {
+			close(holderEntered)
+			<-releaseHolder
+			return nil
+		})
+	}()
+	<-holderEntered
+	waiterEntered := make(chan struct{})
+	releaseWaiter := make(chan struct{})
+	waiterDone := make(chan error, 1)
+	go func() {
+		waiterDone <- files.WithExclusiveLock(context.Background(), ".store/lock", func() error {
+			close(waiterEntered)
+			if err := files.AppendJSONL("INC-1/events.jsonl", map[string]any{"seq": 1}); err != nil {
+				return err
+			}
+			<-releaseWaiter
+			return nil
+		})
+	}()
+	select {
+	case <-waiterEntered:
+		t.Fatal("second lock callback entered before the first released flock")
+	case <-time.After(20 * time.Millisecond):
+	}
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- files.Close() }()
+	waitForRootedFilesCloseDrain(t, files)
+	close(releaseHolder)
+	if err := <-holderDone; err != nil {
+		t.Fatalf("lock holder: %v", err)
+	}
+	<-waiterEntered
+	select {
+	case err := <-closeDone:
+		t.Fatalf("Close returned while second callback was active: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(releaseWaiter)
+	if err := <-waiterDone; err != nil {
+		t.Fatalf("waiting lock callback: %v", err)
+	}
+	if err := <-closeDone; err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestRootedFilesExclusiveLockClosesFileWhenInitialParentSyncFails(t *testing.T) {
+	root, files := openIncidentFiles(t)
+	if err := os.Mkdir(filepath.Join(root, "incidents", ".store"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := errors.New("injected lock parent sync failure")
+	var closes int
+	files.fileOps.close = func(file *os.File) error {
+		closes++
+		return file.Close()
+	}
+	files.syncDirectory = func(root *os.Root, relativePath string) error {
+		if relativePath == ".store" {
+			return sentinel
+		}
+		return syncRootDirectory(root, relativePath)
+	}
+	if err := files.WithExclusiveLock(context.Background(), ".store/lock", func() error {
+		t.Fatal("lock callback ran after initial parent sync failure")
+		return nil
+	}); !errors.Is(err, sentinel) {
+		t.Fatalf("WithExclusiveLock error = %v, want injected sync error", err)
+	}
+	if closes != 1 {
+		t.Fatalf("lock file close calls = %d, want 1", closes)
+	}
+}
+
+func TestRootedFilesOperationFailurePaths(t *testing.T) {
+	_, files := openIncidentFiles(t)
+	if _, err := files.ReadDir("missing"); err == nil {
+		t.Fatal("ReadDir accepted missing directory")
+	}
+	if _, err := files.ReadDir("../escape"); err == nil {
+		t.Fatal("ReadDir accepted escaping path")
+	}
+	if err := files.ReadJSON("missing.json", &map[string]any{}); err == nil {
+		t.Fatal("ReadJSON accepted missing document")
+	}
+	if err := files.WriteJSONAtomic("invalid-target.json", map[string]any{"seq": 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := files.ReadJSON("invalid-target.json", nil); err == nil {
+		t.Fatal("ReadJSON accepted invalid decode target")
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := files.WithExclusiveLock(cancelled, ".store/lock", func() error { return nil }); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled WithExclusiveLock = %v, want context canceled", err)
+	}
+	if err := files.WithExclusiveLock(context.Background(), "../escape", func() error { return nil }); err == nil {
+		t.Fatal("WithExclusiveLock accepted escaping path")
+	}
+	sentinel := errors.New("injected mkdir sync failure")
+	files.syncDirectory = func(*os.Root, string) error { return sentinel }
+	if err := files.WriteJSONAtomic("new/incident.json", map[string]any{"seq": 1}); !errors.Is(err, sentinel) {
+		t.Fatalf("WriteJSONAtomic mkdir sync error = %v", err)
+	}
+}
+
+func TestRootedFilesPrivateClosedFailurePaths(t *testing.T) {
+	if _, err := (&RootedFiles{}).openFile("file", os.O_RDONLY, 0); err == nil {
+		t.Fatal("openFile accepted absent root")
+	}
+	var nilFiles *RootedFiles
+	if err := nilFiles.beginOperation(true); err == nil {
+		t.Fatal("nil RootedFiles accepted operation")
+	}
+	root, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := root.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncRootDirectory(root, "."); err == nil {
+		t.Fatal("syncRootDirectory accepted closed root")
+	}
+}
+
+func waitForRootedFilesCloseDrain(t *testing.T, files *RootedFiles) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		files.lifecycleMu.Lock()
+		closing := files.closing
+		files.lifecycleMu.Unlock()
+		if closing {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("Close did not enter lifecycle draining state")
 }
 
 func TestRootedFilesDALgoAuthorizationBoundary(t *testing.T) {
