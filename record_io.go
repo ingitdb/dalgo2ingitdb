@@ -6,17 +6,115 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"unicode"
 
 	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
+// Record keys substituted into a record_file.name template must stay a single
+// path segment on every OS, otherwise an ID such as "a/b.txt" would be stored
+// as a nested file that collection listings never see. Both separators are
+// escaped regardless of the host OS so a repository reads the same everywhere.
+// IDs without separators map to exactly the same file name as before.
+var (
+	recordKeyFileNameEscaper   = strings.NewReplacer("/", "%2F", `\`, "%5C")
+	recordKeyFileNameUnescaper = strings.NewReplacer("%2F", "/", "%5C", `\`)
+)
+
+// recordKeyToFileName escapes path separators in a record key.
+func recordKeyToFileName(recordKey string) string {
+	return recordKeyFileNameEscaper.Replace(recordKey)
+}
+
+// recordKeyFromFileName reverses recordKeyToFileName.
+func recordKeyFromFileName(name string) string {
+	return recordKeyFileNameUnescaper.Replace(name)
+}
+
+// validateRecordPathSegment checks an ID that becomes one file or directory
+// name (a record key substituted into record_file.name, or a parent record ID
+// in a nested collection path). It rejects:
+//   - "", "." and "..", which would name the containing or parent directory;
+//   - control characters, which corrupt Git paths and YAML registries;
+//   - the literal escape sequences %2F and %5C in any letter case, which would
+//     share a file with
+//     the ID holding the separator (e.g. "a%2Fb" and "a/b"). dalgo's
+//     record.ValidateStringID reserves "%" for the same reason.
+func validateRecordPathSegment(id string) error {
+	switch id {
+	case "", ".", "..":
+		return fmt.Errorf("dalgo2ingitdb: record ID %q cannot be used as a file name", id)
+	}
+	for _, r := range id {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("dalgo2ingitdb: record ID %q contains a control character", id)
+		}
+	}
+	if runtime.GOOS == "windows" && isWindowsReservedName(id) {
+		return fmt.Errorf("dalgo2ingitdb: record ID %q is a reserved Windows device name", id)
+	}
+	// Case-insensitive: on NTFS and default APFS "a%2fb" and "a%2Fb" name the
+	// same file.
+	if upper := strings.ToUpper(id); strings.Contains(upper, "%2F") || strings.Contains(upper, "%5C") {
+		return fmt.Errorf("dalgo2ingitdb: record ID %q contains a reserved escape sequence (%%2F or %%5C)", id)
+	}
+	return nil
+}
+
+// isWindowsReservedName reports whether a file name built from id would name a
+// DOS device (CON, PRN, AUX, NUL, COM0-9, LPT0-9, including the superscript
+// digit variants) on Windows. Windows matches the part before the first dot
+// with trailing spaces ignored, so "nul.txt" and "con " are reserved too, and
+// appending an extension such as ".yaml" does not make them safe on all
+// Windows versions. filepath.IsLocal no longer rejects these names with an
+// extension, so the driver checks them explicitly.
+func isWindowsReservedName(id string) bool {
+	base, _, _ := strings.Cut(id, ".")
+	base = strings.ToUpper(strings.TrimRight(base, " "))
+	switch base {
+	case "CON", "PRN", "AUX", "NUL":
+		return true
+	}
+	if len(base) >= 4 && (base[:3] == "COM" || base[:3] == "LPT") {
+		switch base[3:] {
+		case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "\u00b9", "\u00b2", "\u00b3":
+			return true
+		}
+	}
+	return false
+}
+
+// validateRecordFileKey validates recordKey for a collection whose record file
+// name is derived from the key, then verifies — as defense in depth — that the
+// resolved record path stays inside the collection directory.
+func validateRecordFileKey(colDef *ingitdb.CollectionDef, recordKey string) error {
+	if !strings.Contains(colDef.RecordFile.Name, "{key}") {
+		return nil
+	}
+	if err := validateRecordPathSegment(recordKey); err != nil {
+		return err
+	}
+	return requireContainedPath(colDef.DirPath, resolveRecordPath(colDef, recordKey))
+}
+
+// requireContainedPath fails unless path is lexically strictly inside dir.
+func requireContainedPath(dir, path string) error {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil || rel == "." || !filepath.IsLocal(rel) {
+		return fmt.Errorf("dalgo2ingitdb: resolved path %q escapes %q", path, dir)
+	}
+	return nil
+}
+
 // resolveRecordPath builds the on-disk path for a record by expanding the
 // `{key}` placeholder in record_file.name and joining with the collection
 // directory (plus the $records/ subdirectory when the name contains
-// `{key}`). Mirrors dalgo2fsingitdb.resolveRecordPath.
+// `{key}`). Path separators in the key are escaped so the record is always one
+// file (see recordKeyToFileName).
 func resolveRecordPath(colDef *ingitdb.CollectionDef, recordKey string) string {
-	name := strings.ReplaceAll(colDef.RecordFile.Name, "{key}", recordKey)
+	name := strings.ReplaceAll(colDef.RecordFile.Name, "{key}", recordKeyToFileName(recordKey))
 	base := colDef.RecordFile.RecordsBasePath()
 	return filepath.Join(colDef.DirPath, base, name)
 }

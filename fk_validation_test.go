@@ -354,3 +354,17 @@ func TestReadwriteTx_DeleteUnreferencedParentSucceeds(t *testing.T) {
 	parentPath := collectionRecordPath(root, "parents", "parent-2")
 	requireNoRecordFile(t, parentPath)
 }
+
+// Foreign-key values come from record data and must pass the same file-name
+// validation as primary keys before any parent path is resolved; such values
+// can never reference an existing parent.
+func TestReadwriteTx_InsertForeignKeyValueWithInvalidFileNameFails(t *testing.T) {
+	t.Parallel()
+	db, root := setupForeignKeyDB(t, "parents")
+	for _, value := range []string{"..", "a%2fb", "x\ny"} {
+		childData := map[string]any{"name": "Child", "parent_id": value}
+		err := insertForeignKeyRecord(t, db, "children", "child-1", childData)
+		requireErrorContainsAll(t, err, "Insert", "children", "parent_id", "parents")
+		requireNoRecordFile(t, childRecordPath(root, "child-1"))
+	}
+}

@@ -208,6 +208,9 @@ func (r readonlyTx) resolveCollection(key *dalrecord2.Key) (*ingitdb.CollectionD
 		return nil, "", fmt.Errorf("dalgo2ingitdb: collection %q has no record_file definition", key.Collection())
 	}
 	recordKey := fmt.Sprintf("%v", key.ID)
+	if err := validateRecordFileKey(colDef, recordKey); err != nil {
+		return nil, "", err
+	}
 	return colDef, recordKey, nil
 }
 

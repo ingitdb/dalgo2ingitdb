@@ -5,10 +5,7 @@ import (
 	"path/filepath"
 	"regexp"
 
-	"github.com/gofrs/flock"
 	"gopkg.in/yaml.v3"
-
-	"github.com/ingitdb/ingitdb-go/ingitdb/config"
 )
 
 // Test seams over os.*/config functions. These hold no state; tests swap them
@@ -43,12 +40,12 @@ var (
 	// are unreachable for the plain map/struct values passed.
 	yamlMarshal = yaml.Marshal
 	// writeRootCollections is used by the registry helpers.
-	writeRootCollections = config.WriteRootCollectionsToFile
+	writeRootCollections = writeRootCollectionsYAML
 	// readSingleRecord is used by readAllSingleRecords. The seam lets tests
 	// reach the found==false branch, which in production only occurs when a
 	// globbed file vanishes before the read (a TOCTOU race).
 	readSingleRecord = readSingleRecordFile
 	// newFileLocker is used by withSharedLock/withExclusiveLock. The seam lets
-	// tests inject lock-acquisition failures. *flock.Flock satisfies fileLocker.
-	newFileLocker = func(path string) fileLocker { return flock.New(path) }
+	// tests inject lock-acquisition failures.
+	newFileLocker = defaultFileLocker
 )
