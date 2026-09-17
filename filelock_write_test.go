@@ -1,6 +1,8 @@
 package dalgo2ingitdb
 
 import (
+	"github.com/ingitdb/ingitdb-go/ingitdb"
+
 	"os"
 	"path/filepath"
 	"strings"
@@ -109,6 +111,23 @@ func TestRequireContainedPath(t *testing.T) {
 	for _, p := range []string{filepath.Join(base, "..", "x"), base, filepath.Join("db", "other")} {
 		if err := requireContainedPath(base, p); err == nil {
 			t.Errorf("path %q escaping %q: want error", p, base)
+		}
+	}
+}
+
+func TestForeignKeyTargetExists_InvalidKeyResolvesNoPath(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	colDef := &ingitdb.CollectionDef{ID: "parents", DirPath: dir, RecordFile: &ingitdb.RecordFileDef{Name: "{key}", Format: ingitdb.RecordFormatYAML, RecordType: ingitdb.SingleRecord}}
+	// With a bare "{key}" template ".." would otherwise resolve to the
+	// collection directory itself.
+	if err := os.WriteFile(filepath.Join(dir, "definition.yaml"), []byte("x: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"..", "a%2fB", ""} {
+		exists, err := foreignKeyTargetExists(colDef, key)
+		if exists || err != nil {
+			t.Errorf("key %q: exists=%v err=%v, want false,nil", key, exists, err)
 		}
 	}
 }

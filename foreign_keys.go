@@ -269,6 +269,13 @@ func foreignKeyTargetExists(parentDef *ingitdb.CollectionDef, parentKey string) 
 	if parentDef.RecordFile == nil {
 		return false, fmt.Errorf("configuration error: parent collection %q has no record_file definition", parentDef.ID)
 	}
+	// Foreign-key values come from record data, so they get the same file-name
+	// validation and containment check as primary keys. A key that cannot be a
+	// record file name cannot reference an existing record, and no path is
+	// resolved for it.
+	if err := validateRecordFileKey(parentDef, parentKey); err != nil {
+		return false, nil
+	}
 	path := resolveRecordPath(parentDef, parentKey)
 	switch parentDef.RecordFile.RecordType {
 	case ingitdb.SingleRecord:

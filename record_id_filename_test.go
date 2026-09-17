@@ -51,7 +51,6 @@ func TestDB_RecordIDsWithPathSeparators(t *testing.T) {
 		`c\d`:      "c%5Cd.yaml",
 		"plain":    "plain.yaml",
 		"50%off":   "50%off.yaml",
-		"x%2fy":    "x%2fy.yaml",
 		"nested/x": "nested%2Fx.yaml",
 	}
 	for id := range ids {
@@ -126,7 +125,7 @@ func TestDB_RecordIDsContainingEscapeSequencesRejected(t *testing.T) {
 	t.Parallel()
 	db, _ := setupSingleRecordDB(t)
 	ctx := context.Background()
-	for _, id := range []string{"a%2Fb", `a%5Cb`} {
+	for _, id := range []string{"a%2Fb", `a%5Cb`, "a%2fb", "a%5cb"} {
 		err := db.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
 			return tx.Set(ctx, record.NewRecordWithData(record.NewKeyWithID("countries", id), map[string]any{"name": id}))
 		})
@@ -137,5 +136,28 @@ func TestDB_RecordIDsContainingEscapeSequencesRejected(t *testing.T) {
 		if err := db.Get(ctx, got); err == nil || errors.Is(err, record.ErrRecordNotFound) {
 			t.Errorf("Get %q: want invalid-id error, got %v", id, err)
 		}
+	}
+}
+
+// On case-insensitive file systems "a%2fb.yaml" and "a%2Fb.yaml" are one file,
+// so after storing "a/b" the lower-case spelling must not alias it.
+func TestDB_RecordIDEscapeCheckIsCaseInsensitive(t *testing.T) {
+	t.Parallel()
+	db, root := setupSingleRecordDB(t)
+	ctx := context.Background()
+	set := func(id, name string) error {
+		return db.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
+			return tx.Set(ctx, record.NewRecordWithData(record.NewKeyWithID("countries", id), map[string]any{"name": name}))
+		})
+	}
+	if err := set("a/b", "original"); err != nil {
+		t.Fatalf("Set a/b: %v", err)
+	}
+	if err := set("a%2fb", "clobber"); err == nil {
+		t.Fatal(`Set "a%2fb": want error, got nil`)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "countries", "$records", "a%2Fb.yaml"))
+	if err != nil || string(data) != "name: original\n" {
+		t.Errorf("a/b record changed: %q, %v", data, err)
 	}
 }

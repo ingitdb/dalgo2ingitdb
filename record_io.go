@@ -37,7 +37,8 @@ func recordKeyFromFileName(name string) string {
 // in a nested collection path). It rejects:
 //   - "", "." and "..", which would name the containing or parent directory;
 //   - control characters, which corrupt Git paths and YAML registries;
-//   - the literal escape sequences %2F and %5C, which would share a file with
+//   - the literal escape sequences %2F and %5C in any letter case, which would
+//     share a file with
 //     the ID holding the separator (e.g. "a%2Fb" and "a/b"). dalgo's
 //     record.ValidateStringID reserves "%" for the same reason.
 func validateRecordPathSegment(id string) error {
@@ -50,7 +51,9 @@ func validateRecordPathSegment(id string) error {
 			return fmt.Errorf("dalgo2ingitdb: record ID %q contains a control character", id)
 		}
 	}
-	if strings.Contains(id, "%2F") || strings.Contains(id, "%5C") {
+	// Case-insensitive: on NTFS and default APFS "a%2fb" and "a%2Fb" name the
+	// same file.
+	if upper := strings.ToUpper(id); strings.Contains(upper, "%2F") || strings.Contains(upper, "%5C") {
 		return fmt.Errorf("dalgo2ingitdb: record ID %q contains a reserved escape sequence (%%2F or %%5C)", id)
 	}
 	return nil
