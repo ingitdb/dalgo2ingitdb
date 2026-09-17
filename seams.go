@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"regexp"
 
-	"github.com/gofrs/flock"
 	"gopkg.in/yaml.v3"
 
 	"github.com/ingitdb/ingitdb-go/ingitdb/config"
@@ -49,6 +48,6 @@ var (
 	// globbed file vanishes before the read (a TOCTOU race).
 	readSingleRecord = readSingleRecordFile
 	// newFileLocker is used by withSharedLock/withExclusiveLock. The seam lets
-	// tests inject lock-acquisition failures. *flock.Flock satisfies fileLocker.
-	newFileLocker = func(path string) fileLocker { return flock.New(path) }
+	// tests inject lock-acquisition failures.
+	newFileLocker = defaultFileLocker
 )
