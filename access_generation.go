@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -646,7 +647,15 @@ func atomicWriteFile(name string, data []byte, mode os.FileMode) error {
 	}
 	return syncDir(filepath.Dir(name))
 }
+
+// syncDir flushes a directory entry change to stable storage. Windows cannot
+// flush a directory handle opened for reading (FlushFileBuffers returns
+// "Access is denied") and NTFS journals directory metadata itself, so it is a
+// no-op there.
 func syncDir(name string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
 	f, err := os.Open(name)
 	if err != nil {
 		return err
