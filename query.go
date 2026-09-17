@@ -656,7 +656,7 @@ func buildKeyExtractor(nameTemplate string) (func(relPath string) string, error)
 		if m == nil {
 			return ""
 		}
-		return m[1]
+		return recordKeyFromFileName(m[1])
 	}, nil
 }
 

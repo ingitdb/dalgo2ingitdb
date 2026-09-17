@@ -11,12 +11,47 @@ import (
 	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
+// Record keys substituted into a record_file.name template must stay a single
+// path segment on every OS, otherwise an ID such as "a/b.txt" would be stored
+// as a nested file that collection listings never see. Both separators are
+// escaped regardless of the host OS so a repository reads the same everywhere.
+// IDs without separators map to exactly the same file name as before.
+var (
+	recordKeyFileNameEscaper   = strings.NewReplacer("/", "%2F", `\`, "%5C")
+	recordKeyFileNameUnescaper = strings.NewReplacer("%2F", "/", "%5C", `\`)
+)
+
+// recordKeyToFileName escapes path separators in a record key.
+func recordKeyToFileName(recordKey string) string {
+	return recordKeyFileNameEscaper.Replace(recordKey)
+}
+
+// recordKeyFromFileName reverses recordKeyToFileName.
+func recordKeyFromFileName(name string) string {
+	return recordKeyFileNameUnescaper.Replace(name)
+}
+
+// validateRecordFileKey rejects keys that literally contain an escape
+// sequence produced by recordKeyToFileName: such a key would share a file with
+// the key holding the separator (e.g. "a%2Fb" and "a/b"). dalgo's
+// record.ValidateStringID reserves "%" for the same reason.
+func validateRecordFileKey(colDef *ingitdb.CollectionDef, recordKey string) error {
+	if !strings.Contains(colDef.RecordFile.Name, "{key}") {
+		return nil
+	}
+	if strings.Contains(recordKey, "%2F") || strings.Contains(recordKey, "%5C") {
+		return fmt.Errorf("dalgo2ingitdb: record ID %q contains a reserved escape sequence (%%2F or %%5C)", recordKey)
+	}
+	return nil
+}
+
 // resolveRecordPath builds the on-disk path for a record by expanding the
 // `{key}` placeholder in record_file.name and joining with the collection
 // directory (plus the $records/ subdirectory when the name contains
-// `{key}`). Mirrors dalgo2fsingitdb.resolveRecordPath.
+// `{key}`). Path separators in the key are escaped so the record is always one
+// file (see recordKeyToFileName).
 func resolveRecordPath(colDef *ingitdb.CollectionDef, recordKey string) string {
-	name := strings.ReplaceAll(colDef.RecordFile.Name, "{key}", recordKey)
+	name := strings.ReplaceAll(colDef.RecordFile.Name, "{key}", recordKeyToFileName(recordKey))
 	base := colDef.RecordFile.RecordsBasePath()
 	return filepath.Join(colDef.DirPath, base, name)
 }
