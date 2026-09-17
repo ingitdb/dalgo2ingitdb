@@ -589,6 +589,7 @@ func TestWriteMapOfRecordsFile_WriteError(t *testing.T) {
 // only reads the inode, not the contents.  We therefore skip this particular
 // sub-case and focus on the happy paths that are testable.
 func TestDeleteSingleRecordFile_StatNonExistError(t *testing.T) {
+	skipWithoutPOSIXPermissions(t)
 	t.Parallel()
 	if os.Getuid() == 0 {
 		t.Skip("root can read any file; cannot exercise permission-error branch")
@@ -699,6 +700,7 @@ func TestDeregisterFromRootCollections_WriteError(t *testing.T) {
 // IfNotExists is set, the collection already exists, but registerInRootCollections
 // fails (schema_modifier.go line 57-59).
 func TestCreateCollection_IfNotExists_RegisterFails(t *testing.T) {
+	skipWithoutPOSIXPermissions(t)
 	t.Parallel()
 	if os.Getuid() == 0 {
 		t.Skip("root can write anywhere")
@@ -795,6 +797,7 @@ func TestCreateCollection_MkdirFails(t *testing.T) {
 // TestCreateCollection_WriteYAMLFails exercises the writeCollectionDefYAML
 // failure path (schema_modifier.go line 74-78).
 func TestCreateCollection_WriteYAMLFails(t *testing.T) {
+	skipWithoutPOSIXPermissions(t)
 	t.Parallel()
 	if os.Getuid() == 0 {
 		t.Skip("root can write anywhere")
@@ -861,6 +864,7 @@ func TestDropCollection_StatNonExistError(t *testing.T) {
 // TestDropCollection_DeregisterFails exercises the deregisterFromRootCollections
 // failure branch (schema_modifier.go line 115-117).
 func TestDropCollection_DeregisterFails(t *testing.T) {
+	skipWithoutPOSIXPermissions(t)
 	t.Parallel()
 	if os.Getuid() == 0 {
 		t.Skip("root can write anywhere")
@@ -900,6 +904,7 @@ func TestDropCollection_DeregisterFails(t *testing.T) {
 //     before AlterCollection runs so that writeCollectionDefYAML fails
 //     consistently.
 func TestAlterCollection_FlushError(t *testing.T) {
+	skipWithoutPOSIXPermissions(t)
 	t.Parallel()
 	if os.Getuid() == 0 {
 		t.Skip("root can write anywhere")
@@ -975,6 +980,7 @@ func TestWriteCollectionDefYAML_WriteToDirectory(t *testing.T) {
 // (schema_modifier.go line 403). We make the records directory non-readable
 // after it has been found by WalkDir.
 func TestRewriteRecordFiles_WalkError(t *testing.T) {
+	skipWithoutPOSIXPermissions(t)
 	t.Parallel()
 	if os.Getuid() == 0 {
 		t.Skip("root can read any directory")
@@ -1070,6 +1076,7 @@ func TestRewriteRecordFiles_WriteFileError(t *testing.T) {
 // TestListCollections_WalkError exercises the walkErr != nil branch
 // (schema_reader.go line 72-74) by making the project directory unreadable.
 func TestListCollections_WalkError(t *testing.T) {
+	skipWithoutPOSIXPermissions(t)
 	t.Parallel()
 	if os.Getuid() == 0 {
 		t.Skip("root can traverse any directory")
@@ -1132,6 +1139,7 @@ func TestListCollections_SkipsRootDefinitionYAML(t *testing.T) {
 // TestDescribeCollection_StatNonNotFoundError exercises the branch where Stat
 // returns a non-ErrNotExist error (schema_reader.go line 95-96).
 func TestDescribeCollection_StatNonNotFoundError(t *testing.T) {
+	skipWithoutPOSIXPermissions(t)
 	t.Parallel()
 	if os.Getuid() == 0 {
 		t.Skip("root can read any path")
@@ -1384,6 +1392,7 @@ func TestReadwriteTx_Set_MapOfRecords_ReadError(t *testing.T) {
 // TestReadwriteTx_Insert_SingleRecord_StatError exercises the stat non-ErrNotExist
 // branch in Insert (tx_readwrite.go line 86-88).
 func TestReadwriteTx_Insert_SingleRecord_StatError(t *testing.T) {
+	skipWithoutPOSIXPermissions(t)
 	t.Parallel()
 	if os.Getuid() == 0 {
 		t.Skip("root can stat any path")
@@ -1658,6 +1667,7 @@ func (e *alwaysReadError) Error() string { return "always fails" }
 // TestReadMapOfRecordsFile_StatError exercises the stat non-ErrNotExist error
 // branch (record_io.go line 84).
 func TestReadMapOfRecordsFile_StatError(t *testing.T) {
+	skipWithoutPOSIXPermissions(t)
 	t.Parallel()
 	if os.Getuid() == 0 {
 		t.Skip("root can stat any path")
@@ -1965,6 +1975,7 @@ func TestReadwriteTx_Delete_MapOfRecords_WriteError(t *testing.T) {
 // TestReadSingleRecordFile_StatNonExistError exercises the stat non-ErrNotExist
 // branch (record_io.go line 34-35) by making the parent directory non-executable.
 func TestReadSingleRecordFile_StatNonExistError(t *testing.T) {
+	skipWithoutPOSIXPermissions(t)
 	t.Parallel()
 	if os.Getuid() == 0 {
 		t.Skip("root can stat any path")
@@ -2350,6 +2361,7 @@ func TestExecuteQuery_GroupConditionInnerError(t *testing.T) {
 // TestDescribeCollection_ReadInsideLockError exercises the os.ReadFile error
 // inside the shared lock in DescribeCollection (schema_reader.go line 101-103).
 func TestDescribeCollection_ReadInsideLockError(t *testing.T) {
+	skipWithoutPOSIXPermissions(t)
 	t.Parallel()
 	if os.Getuid() == 0 {
 		t.Skip("root can read any file")
@@ -2448,6 +2460,7 @@ func TestDeregisterFromRootCollections_ReadError(t *testing.T) {
 // TestCreateCollection_StatNonExistError exercises the "stat returns
 // non-ErrNotExist" branch (schema_modifier.go line 62-64).
 func TestCreateCollection_StatNonExistError(t *testing.T) {
+	skipWithoutPOSIXPermissions(t)
 	t.Parallel()
 	if os.Getuid() == 0 {
 		t.Skip("root can stat any path")
@@ -2570,6 +2583,7 @@ func TestRewriteRecordFiles_YAMLParseError(t *testing.T) {
 // writeCollectionDefYAML fails because the directory doesn't exist.
 // This covers schema_modifier.go line 76-78.
 func TestCreateCollection_LockWriteError2(t *testing.T) {
+	skipWithoutPOSIXPermissions(t)
 	t.Parallel()
 	if os.Getuid() == 0 {
 		t.Skip("root can write anywhere")
@@ -2622,6 +2636,7 @@ func TestCreateCollection_LockWriteError2(t *testing.T) {
 // directory exists but something prevents removal — this is OS-specific.
 // We use a read-only parent directory trick.
 func TestDropCollection_RemoveAllError(t *testing.T) {
+	skipWithoutPOSIXPermissions(t)
 	t.Parallel()
 	if os.Getuid() == 0 {
 		t.Skip("root bypasses permission checks for RemoveAll")
@@ -2763,6 +2778,7 @@ func TestExecuteQueryToRecordsReader_ReadError(t *testing.T) {
 // TestReadonlyTx_Get_SingleRecord_StatError exercises the readSingleRecordFile
 // stat non-ErrNotExist error path in Get (tx_readonly.go line 40).
 func TestReadonlyTx_Get_SingleRecord_StatError(t *testing.T) {
+	skipWithoutPOSIXPermissions(t)
 	t.Parallel()
 	if os.Getuid() == 0 {
 		t.Skip("root can stat any path")
@@ -2978,6 +2994,7 @@ func TestReadwriteTx_Insert_MapOfRecords_WriteError(t *testing.T) {
 // (schema_modifier.go line 400) by making the parent of recordsDir non-executable
 // so Stat fails with EACCES rather than ENOENT.
 func TestRewriteRecordFiles_StatError(t *testing.T) {
+	skipWithoutPOSIXPermissions(t)
 	t.Parallel()
 	if os.Getuid() == 0 {
 		t.Skip("root can stat any path")
