@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/dalgo/dbschema"
@@ -317,6 +318,14 @@ func validateCollectionName(name string) (err error) {
 	}
 	if strings.TrimSpace(name) != name {
 		return fmt.Errorf("collection name %q has leading/trailing whitespace", name)
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("collection name %q contains a control character", name)
+		}
+	}
+	if strings.ContainsRune(name, '\\') {
+		return fmt.Errorf("collection name %q must not contain a backslash", name)
 	}
 	for _, seg := range strings.Split(name, "/") {
 		if seg == ".." || seg == "." || seg == "" {

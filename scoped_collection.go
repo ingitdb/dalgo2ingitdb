@@ -24,6 +24,10 @@ import (
 // that share a leaf collection + record id but differ in their parent chain no
 // longer collide.
 //
+// Parent record IDs are validated and escaped like record file keys (see
+// validateRecordPathSegment and recordKeyToFileName), so a parent ID can never
+// add or climb directory levels.
+//
 // A top-level collection (parent == nil) resolves exactly as before: a flat
 // lookup in def.Collections with the schema-declared DirPath untouched. Only
 // nested keys take the scoping path, so existing (non-nested) behaviour is
@@ -64,7 +68,13 @@ func resolveScopedCollection(def *ingitdb.Definition, collection string, parent 
 	if !ok {
 		return nil, fmt.Errorf("dalgo2ingitdb: %w: %q", errCollectionNotInDefinition, rootCol)
 	}
-	dir := cur.DirPath
+	rootDir := cur.DirPath
+	dir := rootDir
+	for _, a := range ancestors {
+		if err := validateRecordPathSegment(a.id); err != nil {
+			return nil, err
+		}
+	}
 	// Walk the intermediate ancestors (root's children, grandchildren, ...).
 	for i := 1; i < len(ancestors); i++ {
 		parentID := ancestors[i-1].id
@@ -73,7 +83,7 @@ func resolveScopedCollection(def *ingitdb.Definition, collection string, parent 
 		if !ok {
 			return nil, fmt.Errorf("dalgo2ingitdb: %w: subcollection %q under %q", errCollectionNotInDefinition, subColID, cur.ID)
 		}
-		dir = filepath.Join(dir, parentID, subColID)
+		dir = filepath.Join(dir, recordKeyToFileName(parentID), subColID)
 		cur = sub
 	}
 
@@ -84,7 +94,10 @@ func resolveScopedCollection(def *ingitdb.Definition, collection string, parent 
 	if !ok {
 		return nil, fmt.Errorf("dalgo2ingitdb: %w: subcollection %q under %q", errCollectionNotInDefinition, collection, cur.ID)
 	}
-	dir = filepath.Join(dir, parentID, collection)
+	dir = filepath.Join(dir, recordKeyToFileName(parentID), collection)
+	if err := requireContainedPath(rootDir, dir); err != nil {
+		return nil, err
+	}
 
 	scoped := *target
 	scoped.DirPath = dir

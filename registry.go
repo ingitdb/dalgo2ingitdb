@@ -11,10 +11,38 @@ package dalgo2ingitdb
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/ingitdb/ingitdb-go/ingitdb"
 	"github.com/ingitdb/ingitdb-go/ingitdb/config"
 )
+
+// writeRootCollectionsYAML writes root-collections.yaml with a real YAML
+// encoder. config.WriteRootCollectionsToFile emits every name as a plain
+// scalar, so a name such as "#notes" or one holding YAML indicators produced
+// an unparseable registry that bricked the database. Names that are safe plain
+// scalars serialize byte-identically to that writer (sorted "name: path" lines).
+func writeRootCollectionsYAML(dirPath string, m map[string]string) error {
+	if dirPath == "" {
+		dirPath = "."
+	}
+	cfgDir := filepath.Join(dirPath, config.IngitDBDirName)
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create %s: %w", cfgDir, err)
+	}
+	var content []byte
+	if len(m) > 0 {
+		var err error
+		if content, err = yamlMarshal(m); err != nil {
+			return fmt.Errorf("failed to encode root collections: %w", err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, config.RootCollectionsFileName), content, 0o644); err != nil {
+		return fmt.Errorf("failed to write root collections file: %w", err)
+	}
+	return nil
+}
 
 // ErrCollectionPathConflict is returned by CreateCollection when
 // <projectPath>/.ingitdb/root-collections.yaml already contains an

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
@@ -31,16 +32,48 @@ func recordKeyFromFileName(name string) string {
 	return recordKeyFileNameUnescaper.Replace(name)
 }
 
-// validateRecordFileKey rejects keys that literally contain an escape
-// sequence produced by recordKeyToFileName: such a key would share a file with
-// the key holding the separator (e.g. "a%2Fb" and "a/b"). dalgo's
-// record.ValidateStringID reserves "%" for the same reason.
+// validateRecordPathSegment checks an ID that becomes one file or directory
+// name (a record key substituted into record_file.name, or a parent record ID
+// in a nested collection path). It rejects:
+//   - "", "." and "..", which would name the containing or parent directory;
+//   - control characters, which corrupt Git paths and YAML registries;
+//   - the literal escape sequences %2F and %5C, which would share a file with
+//     the ID holding the separator (e.g. "a%2Fb" and "a/b"). dalgo's
+//     record.ValidateStringID reserves "%" for the same reason.
+func validateRecordPathSegment(id string) error {
+	switch id {
+	case "", ".", "..":
+		return fmt.Errorf("dalgo2ingitdb: record ID %q cannot be used as a file name", id)
+	}
+	for _, r := range id {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("dalgo2ingitdb: record ID %q contains a control character", id)
+		}
+	}
+	if strings.Contains(id, "%2F") || strings.Contains(id, "%5C") {
+		return fmt.Errorf("dalgo2ingitdb: record ID %q contains a reserved escape sequence (%%2F or %%5C)", id)
+	}
+	return nil
+}
+
+// validateRecordFileKey validates recordKey for a collection whose record file
+// name is derived from the key, then verifies — as defense in depth — that the
+// resolved record path stays inside the collection directory.
 func validateRecordFileKey(colDef *ingitdb.CollectionDef, recordKey string) error {
 	if !strings.Contains(colDef.RecordFile.Name, "{key}") {
 		return nil
 	}
-	if strings.Contains(recordKey, "%2F") || strings.Contains(recordKey, "%5C") {
-		return fmt.Errorf("dalgo2ingitdb: record ID %q contains a reserved escape sequence (%%2F or %%5C)", recordKey)
+	if err := validateRecordPathSegment(recordKey); err != nil {
+		return err
+	}
+	return requireContainedPath(colDef.DirPath, resolveRecordPath(colDef, recordKey))
+}
+
+// requireContainedPath fails unless path is lexically strictly inside dir.
+func requireContainedPath(dir, path string) error {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil || rel == "." || !filepath.IsLocal(rel) {
+		return fmt.Errorf("dalgo2ingitdb: resolved path %q escapes %q", path, dir)
 	}
 	return nil
 }

@@ -99,3 +99,16 @@ func TestFailedFileLocker(t *testing.T) {
 		t.Errorf("Unlock: %v", err)
 	}
 }
+
+func TestRequireContainedPath(t *testing.T) {
+	t.Parallel()
+	base := filepath.Join("db", "col")
+	if err := requireContainedPath(base, filepath.Join(base, "$records", "a.yaml")); err != nil {
+		t.Errorf("contained path rejected: %v", err)
+	}
+	for _, p := range []string{filepath.Join(base, "..", "x"), base, filepath.Join("db", "other")} {
+		if err := requireContainedPath(base, p); err == nil {
+			t.Errorf("path %q escaping %q: want error", p, base)
+		}
+	}
+}
