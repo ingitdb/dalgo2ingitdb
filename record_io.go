@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"unicode"
 
@@ -51,12 +52,38 @@ func validateRecordPathSegment(id string) error {
 			return fmt.Errorf("dalgo2ingitdb: record ID %q contains a control character", id)
 		}
 	}
+	if runtime.GOOS == "windows" && isWindowsReservedName(id) {
+		return fmt.Errorf("dalgo2ingitdb: record ID %q is a reserved Windows device name", id)
+	}
 	// Case-insensitive: on NTFS and default APFS "a%2fb" and "a%2Fb" name the
 	// same file.
 	if upper := strings.ToUpper(id); strings.Contains(upper, "%2F") || strings.Contains(upper, "%5C") {
 		return fmt.Errorf("dalgo2ingitdb: record ID %q contains a reserved escape sequence (%%2F or %%5C)", id)
 	}
 	return nil
+}
+
+// isWindowsReservedName reports whether a file name built from id would name a
+// DOS device (CON, PRN, AUX, NUL, COM0-9, LPT0-9, including the superscript
+// digit variants) on Windows. Windows matches the part before the first dot
+// with trailing spaces ignored, so "nul.txt" and "con " are reserved too, and
+// appending an extension such as ".yaml" does not make them safe on all
+// Windows versions. filepath.IsLocal no longer rejects these names with an
+// extension, so the driver checks them explicitly.
+func isWindowsReservedName(id string) bool {
+	base, _, _ := strings.Cut(id, ".")
+	base = strings.ToUpper(strings.TrimRight(base, " "))
+	switch base {
+	case "CON", "PRN", "AUX", "NUL":
+		return true
+	}
+	if len(base) >= 4 && (base[:3] == "COM" || base[:3] == "LPT") {
+		switch base[3:] {
+		case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "\u00b9", "\u00b2", "\u00b3":
+			return true
+		}
+	}
+	return false
 }
 
 // validateRecordFileKey validates recordKey for a collection whose record file

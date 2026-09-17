@@ -131,3 +131,17 @@ func TestForeignKeyTargetExists_InvalidKeyResolvesNoPath(t *testing.T) {
 		}
 	}
 }
+
+func TestIsWindowsReservedName(t *testing.T) {
+	t.Parallel()
+	for _, id := range []string{"con", "CON", "nul.txt", "Aux", "prn ", "com1", "LPT9", "com¹", "COM0"} {
+		if !isWindowsReservedName(id) {
+			t.Errorf("%q should be reserved", id)
+		}
+	}
+	for _, id := range []string{"console", "com", "com10", "lpt", "nul2", "a.con", "", "conx.txt"} {
+		if isWindowsReservedName(id) {
+			t.Errorf("%q should not be reserved", id)
+		}
+	}
+}
