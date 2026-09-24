@@ -368,3 +368,104 @@ func TestReadwriteTx_InsertForeignKeyValueWithInvalidFileNameFails(t *testing.T)
 		requireNoRecordFile(t, childRecordPath(root, "child-1"))
 	}
 }
+
+// setupListForeignKeyDB swaps the child's parent_id column for a list-valued
+// parent_ids foreign key (dalgo2ingitdb#18).
+func setupListForeignKeyDB(t *testing.T, parentRequired bool) (dal.DB, string) {
+	t.Helper()
+	db, root := setupForeignKeyDBWithParentRequired(t, "parents", parentRequired)
+	required := "false"
+	if parentRequired {
+		required = "true"
+	}
+	definition := `record_file:
+    name: "{key}.yaml"
+    format: yaml
+    type: map[string]any
+columns:
+    name:
+        type: string
+        required: true
+    parent_ids:
+        type: "[]string"
+        required: ` + required + `
+        foreign_key: parents
+columns_order:
+    - name
+    - parent_ids
+`
+	definitionPath := filepath.Join(root, "children", ".collection", "definition.yaml")
+	if err := os.WriteFile(definitionPath, []byte(definition), 0o644); err != nil {
+		t.Fatalf("write child definition: %v", err)
+	}
+	for _, key := range []string{"parent-1", "parent-2", "parent-3"} {
+		if err := insertForeignKeyRecord(t, db, "parents", key, map[string]any{"name": key}); err != nil {
+			t.Fatalf("insert %s: %v", key, err)
+		}
+	}
+	return db, root
+}
+
+func TestReadwriteTx_InsertListForeignKeyChecksEachElement(t *testing.T) {
+	t.Parallel()
+	db, root := setupListForeignKeyDB(t, true)
+	valid := map[string]any{"name": "Child", "parent_ids": []any{"parent-1", "parent-2", "parent-1"}}
+	if err := insertForeignKeyRecord(t, db, "children", "child-ok", valid); err != nil {
+		t.Fatalf("insert child with existing list parents: %v", err)
+	}
+	if _, err := os.Stat(childRecordPath(root, "child-ok")); err != nil {
+		t.Fatalf("child record file: stat: %v", err)
+	}
+
+	missing := map[string]any{"name": "Child", "parent_ids": []any{"parent-1", "missing-parent"}}
+	err := insertForeignKeyRecord(t, db, "children", "child-bad", missing)
+	requireErrorContainsAll(t, err, "Insert", "children", "parent_ids", "parents", `"missing-parent"`, "parent record not found")
+	requireNoRecordFile(t, childRecordPath(root, "child-bad"))
+}
+
+func TestReadwriteTx_InsertListForeignKeyNestedElementFails(t *testing.T) {
+	t.Parallel()
+	db, root := setupListForeignKeyDB(t, true)
+	data := map[string]any{"name": "Child", "parent_ids": []any{"parent-1", []any{"parent-2"}}}
+	err := insertForeignKeyRecord(t, db, "children", "child-1", data)
+	requireErrorContainsAll(t, err, "Insert", "children", "parent_ids", "must be a scalar")
+	requireNoRecordFile(t, childRecordPath(root, "child-1"))
+}
+
+func TestReadwriteTx_InsertEmptyListForeignKey(t *testing.T) {
+	t.Parallel()
+	empty := map[string]any{"name": "Child", "parent_ids": []any{}}
+
+	db, root := setupListForeignKeyDB(t, false)
+	if err := insertForeignKeyRecord(t, db, "children", "child-1", empty); err != nil {
+		t.Fatalf("insert optional empty list: %v", err)
+	}
+	if _, err := os.Stat(childRecordPath(root, "child-1")); err != nil {
+		t.Fatalf("child record file: stat: %v", err)
+	}
+
+	db, root = setupListForeignKeyDB(t, true)
+	err := insertForeignKeyRecord(t, db, "children", "child-1", empty)
+	requireErrorContainsAll(t, err, "Insert", "children", "parent_ids", "required")
+	requireNoRecordFile(t, childRecordPath(root, "child-1"))
+}
+
+func TestReadwriteTx_DeleteParentReferencedFromListFails(t *testing.T) {
+	t.Parallel()
+	db, root := setupListForeignKeyDB(t, true)
+	childData := map[string]any{"name": "Child", "parent_ids": []any{"parent-1", "parent-2"}}
+	if err := insertForeignKeyRecord(t, db, "children", "child-1", childData); err != nil {
+		t.Fatalf("insert child: %v", err)
+	}
+
+	err := deleteForeignKeyRecord(t, db, "parents", "parent-2")
+	requireErrorContainsAll(t, err, "Delete", "parents", "parent-2", "children", "child-1", "parent_ids")
+	if _, statErr := os.Stat(collectionRecordPath(root, "parents", "parent-2")); statErr != nil {
+		t.Fatalf("parent record file: stat: %v", statErr)
+	}
+
+	if err := deleteForeignKeyRecord(t, db, "parents", "parent-3"); err != nil {
+		t.Fatalf("delete unreferenced parent: %v", err)
+	}
+	requireNoRecordFile(t, collectionRecordPath(root, "parents", "parent-3"))
+}

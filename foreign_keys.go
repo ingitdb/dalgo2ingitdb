@@ -2,6 +2,7 @@ package dalgo2ingitdb
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 
 	"github.com/ingitdb/ingitdb-go/ingitdb"
@@ -21,28 +22,30 @@ func (r readwriteTx) validateWriteForeignKeys(operation, childCollection string,
 		if parentCollection == "" {
 			continue
 		}
-		value, ok := data[field]
-		empty := !ok
-		if ok {
-			empty = isEmptyForeignKeyValue(value)
+		// A list-valued foreign key (e.g. event_ids: [a, b]) is checked element
+		// by element via ingitdb.ForeignKeyElements; a scalar yields itself.
+		parentKeys, elementErrs := ingitdb.ForeignKeyElements(data[field])
+		if len(elementErrs) > 0 {
+			return fmt.Errorf("dalgo2ingitdb: %s foreign key violation: child collection %q field %q references parent collection %q with a list element that is not a scalar (%s): foreign key element must be a scalar", operation, childCollection, field, parentCollection, elementErrs[0])
 		}
-		if empty {
+		if len(parentKeys) == 0 {
 			if column.Required {
 				return fmt.Errorf("dalgo2ingitdb: %s required foreign key field missing or empty: child collection %q field %q references parent collection %q", operation, childCollection, field, parentCollection)
 			}
 			continue
 		}
-		parentKey := fmt.Sprintf("%v", value)
 		parentDef, ok := r.def.Collections[parentCollection]
 		if !ok {
 			return fmt.Errorf("dalgo2ingitdb: %s configuration error: child collection %q field %q references missing foreign_key collection %q", operation, childCollection, field, parentCollection)
 		}
-		exists, err := foreignKeyTargetExists(parentDef, parentKey)
-		if err != nil {
-			return fmt.Errorf("dalgo2ingitdb: %s foreign key lookup failed: child collection %q field %q parent collection %q key %q: %w", operation, childCollection, field, parentCollection, parentKey, err)
-		}
-		if !exists {
-			return fmt.Errorf("dalgo2ingitdb: %s foreign key violation: child collection %q field %q references parent collection %q key %q: parent record not found", operation, childCollection, field, parentCollection, parentKey)
+		for _, parentKey := range parentKeys {
+			exists, err := foreignKeyTargetExists(parentDef, parentKey)
+			if err != nil {
+				return fmt.Errorf("dalgo2ingitdb: %s foreign key lookup failed: child collection %q field %q parent collection %q key %q: %w", operation, childCollection, field, parentCollection, parentKey, err)
+			}
+			if !exists {
+				return fmt.Errorf("dalgo2ingitdb: %s foreign key violation: child collection %q field %q references parent collection %q key %q: parent record not found", operation, childCollection, field, parentCollection, parentKey)
+			}
 		}
 	}
 	return nil
@@ -132,13 +135,10 @@ func (r readwriteTx) validateDeleteForeignKeys(parentCollection, parentKey strin
 			}
 
 			for _, field := range fields {
-				value, ok := data[field]
-				if !ok || isEmptyForeignKeyValue(value) {
-					continue
-				}
-
-				valueText := fmt.Sprintf("%v", value)
-				if valueText == parentKey {
+				// Membership, not equality: a parent referenced from inside a
+				// list-valued foreign key is still referenced.
+				referencedKeys, _ := ingitdb.ForeignKeyElements(data[field])
+				if slices.Contains(referencedKeys, parentKey) {
 					return fmt.Errorf("dalgo2ingitdb: Delete foreign key violation: parent collection %q key %q is referenced by child collection %q record %q field %q", parentCollection, parentKey, childCollection, childKey, field)
 				}
 			}

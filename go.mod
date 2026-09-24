@@ -8,7 +8,7 @@ require (
 	github.com/dal-go/dalgo v0.80.0
 	github.com/dal-go/record v0.1.3
 	github.com/gofrs/flock v0.13.0
-	github.com/ingitdb/ingitdb-go/ingitdb v0.5.2
+	github.com/ingitdb/ingitdb-go/ingitdb v0.7.4
 	github.com/ingr-io/ingr-go v0.0.2
 	golang.org/x/sys v0.47.0
 	gopkg.in/yaml.v3 v3.0.1
