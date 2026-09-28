@@ -23,7 +23,7 @@ jobs:
     with:
       require_conventional_pr_title: true
       code_coverage: true
-      min_test_coverage_percent: 80
+      min_test_coverage_percent: 100
 
   windows_tests:
     # File locking and path handling differ on Windows (mandatory LockFileEx

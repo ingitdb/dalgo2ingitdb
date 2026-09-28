@@ -19,9 +19,6 @@ func (r readwriteTx) validateWriteForeignKeys(operation, childCollection string,
 	for _, field := range fields {
 		column := childDef.Columns[field]
 		parentCollection := column.ForeignKey
-		if parentCollection == "" {
-			continue
-		}
 		// A list-valued foreign key (e.g. event_ids: [a, b]) is checked element
 		// by element via ingitdb.ForeignKeyElements; a scalar yields itself.
 		parentKeys, elementErrs := ingitdb.ForeignKeyElements(data[field])
@@ -115,7 +112,7 @@ func (r readwriteTx) validateDeleteForeignKeys(parentCollection, parentKey strin
 			continue
 		}
 
-		records, err := readAllRecordsFromDisk(childDef)
+		records, err := readAllRecords(childDef)
 		if err != nil {
 			return fmt.Errorf("dalgo2ingitdb: Delete foreign key scan failed for parent collection %q key %q child collection %q: %w", parentCollection, parentKey, childCollection, err)
 		}

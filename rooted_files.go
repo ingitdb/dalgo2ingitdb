@@ -256,7 +256,7 @@ func openRootedFilesWithProject(projectPath string, scope RootedFilesScope, open
 	if strings.TrimSpace(projectPath) == "" {
 		return nil, errors.New("dalgo2ingitdb: rooted files project path is required")
 	}
-	abs, err := filepath.Abs(projectPath)
+	abs, err := filepathAbs(projectPath)
 	if err != nil {
 		return nil, fmt.Errorf("dalgo2ingitdb: absolute rooted files path: %w", err)
 	}
@@ -408,7 +408,7 @@ func (f *RootedFiles) ensureTopLevelDir(relativePath string, mode os.FileMode) e
 		return fmt.Errorf("dalgo2ingitdb: open rooted directory %q: %w", relativePath, err)
 	}
 	dirInfo, statErr := dir.Stat()
-	if statErr == nil && !os.SameFile(info, dirInfo) {
+	if statErr == nil && !sameFileSeam(info, dirInfo) {
 		statErr = errors.New("rooted directory changed during acquisition")
 	}
 	modeChanged := false
@@ -542,7 +542,7 @@ func (f *RootedFiles) recoverAndReadJSONL(relativePath string, maxBytes int64) (
 		return nil, fmt.Errorf("%w: %d", errJSONLMaxBytesInvalid, maxBytes)
 	}
 	if maxBytes >= 0 {
-		if _, err := rootedJSONLBufferSize(maxBytes); err != nil {
+		if _, err := rootedJSONLBufferSizeSeam(maxBytes); err != nil {
 			return nil, err
 		}
 	}
@@ -787,7 +787,7 @@ func (f *RootedFiles) openFile(relativePath string, flag int, perm os.FileMode) 
 	if err != nil {
 		return nil, err
 	}
-	return root.OpenFile(relativePath, flag, perm)
+	return openRootedFileSeam(root, relativePath, flag, perm)
 }
 
 func (f *RootedFiles) openJSONLAppendFile(relativePath string) (*os.File, bool, error) {
@@ -876,7 +876,7 @@ func syncRootDirectory(root *os.Root, relativePath string) error {
 		return fmt.Errorf("open: %w", err)
 	}
 	defer func() { _ = dir.Close() }()
-	if err := dir.Sync(); err != nil {
+	if err := dirSyncSeam(dir); err != nil {
 		return fmt.Errorf("sync: %w", err)
 	}
 	return nil
@@ -936,14 +936,14 @@ func ensureRealRootedScope(root *os.Root, prefix string) (os.FileInfo, error) {
 			return nil, fmt.Errorf("dalgo2ingitdb: create rooted files scope %q: %w", prefix, err)
 		}
 		if err == nil {
-			if err := syncRootDirectory(root, "."); err != nil {
+			if err := syncRootDirectorySeam(root, "."); err != nil {
 				return nil, fmt.Errorf("dalgo2ingitdb: sync rooted files scope parent: %w", err)
 			}
-			if err := syncRootDirectory(root, prefix); err != nil {
+			if err := syncRootDirectorySeam(root, prefix); err != nil {
 				return nil, fmt.Errorf("dalgo2ingitdb: sync rooted files scope %q: %w", prefix, err)
 			}
 		}
-		info, err = root.Lstat(prefix)
+		info, err = rootLstatSeam(root, prefix)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("dalgo2ingitdb: inspect rooted files scope %q: %w", prefix, err)

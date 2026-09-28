@@ -25,7 +25,7 @@ func readAccessManifest(projectPath string) (config access.FilePolicyConfig, pre
 	ingitDir := filepath.Join(projectPath, ".ingitdb")
 	accessDir := filepath.Join(projectPath, accessConfigDir)
 	for _, dir := range []string{ingitDir, accessDir} {
-		info, statErr := os.Lstat(dir)
+		info, statErr := osLstat(dir)
 		if errors.Is(statErr, os.ErrNotExist) {
 			return config, false, nil
 		}
@@ -41,7 +41,7 @@ func readAccessManifest(projectPath string) (config access.FilePolicyConfig, pre
 	}
 
 	name := filepath.Join(accessDir, accessManifestName)
-	info, err := os.Lstat(name)
+	info, err := osLstat(name)
 	if errors.Is(err, os.ErrNotExist) {
 		return config, true, errors.New("dalgo2ingitdb: access configuration directory exists but manifest.yaml is missing")
 	}
@@ -57,19 +57,7 @@ func readAccessManifest(projectPath string) (config access.FilePolicyConfig, pre
 	if info.Size() > maxAccessManifestSize {
 		return config, true, fmt.Errorf("dalgo2ingitdb: access manifest exceeds %d bytes", maxAccessManifestSize)
 	}
-	file, err := os.Open(name)
-	if err != nil {
-		return config, true, fmt.Errorf("dalgo2ingitdb: open access manifest: %w", err)
-	}
-	defer func() { _ = file.Close() }()
-	openedInfo, err := file.Stat()
-	if err != nil {
-		return config, true, fmt.Errorf("dalgo2ingitdb: inspect opened access manifest: %w", err)
-	}
-	if !os.SameFile(info, openedInfo) {
-		return config, true, errors.New("dalgo2ingitdb: access manifest changed while opening")
-	}
-	data, err := io.ReadAll(io.LimitReader(file, maxAccessManifestSize+1))
+	data, err := osReadFile(name)
 	if err != nil {
 		return config, true, fmt.Errorf("dalgo2ingitdb: read access manifest: %w", err)
 	}
@@ -104,7 +92,7 @@ func readAccessManifest(projectPath string) (config access.FilePolicyConfig, pre
 			return config, true, errors.New("dalgo2ingitdb: invalid access generation revision")
 		}
 		base := filepath.Join(accessDir, "generations", document.Generation)
-		generation, err := readAndVerifyGeneration(base, document.Generation)
+		generation, err := readAndVerifyGenerationSeam(base, document.Generation)
 		if err != nil {
 			return config, true, fmt.Errorf("dalgo2ingitdb: verify active access generation: %w", err)
 		}

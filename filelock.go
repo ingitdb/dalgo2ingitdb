@@ -64,7 +64,7 @@ func withExclusiveLock(path string, fn func() error) error {
 // platform lock path for target. A failure to prepare the lock path surfaces
 // as a lock-acquisition error.
 func defaultFileLocker(target string) fileLocker {
-	lockPath, err := lockFilePath(target)
+	lockPath, err := lockFilePathSeam(target)
 	if err != nil {
 		return failedFileLocker{err: err}
 	}
@@ -84,7 +84,7 @@ func (l failedFileLocker) Unlock() error { return nil }
 // systems). Every cooperating process resolving the same target therefore
 // locks the same sidecar, and nothing is created inside the project tree.
 func sidecarLockPath(cacheDir, target string, foldCase bool) (string, error) {
-	abs, err := filepath.Abs(target)
+	abs, err := filepathAbs(target)
 	if err != nil {
 		return "", fmt.Errorf("resolve lock target %s: %w", target, err)
 	}

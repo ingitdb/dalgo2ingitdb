@@ -3,7 +3,6 @@ package dalgo2ingitdb
 import (
 	"context"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -125,10 +124,10 @@ func configureProtected(backend *Database, schema dbschema.SchemaReader, owner *
 		participants = append(participants, *owner)
 	}
 	secret := make([]byte, 32)
-	if _, err := rand.Read(secret); err != nil {
+	if _, err := randReadSeam(secret); err != nil {
 		return nil, nil, fmt.Errorf("dalgo2ingitdb: protected revision secret: %w", err)
 	}
-	coordinator, err := access.NewValidatedEnforcementCoordinator(&protectedStorage{db: backend, secret: secret}, backend.validateProtectedCandidate, participants...)
+	coordinator, err := newValidatedCoordinatorSeam(&protectedStorage{db: backend, secret: secret}, backend.validateProtectedCandidate, participants...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -157,7 +156,7 @@ func configureProtected(backend *Database, schema dbschema.SchemaReader, owner *
 		return all, nil
 	}
 	backend.storedOnlyReads = true
-	secured, err := access.SecureDB(dal.NewDB(backend), access.WithDatabasePolicyProvider(provider), access.WithEnforcementCoordinator(coordinator))
+	secured, err := accessSecureDBSeam(dal.NewDB(backend), access.WithDatabasePolicyProvider(provider), access.WithEnforcementCoordinator(coordinator))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -196,7 +195,7 @@ func (s *protectedExecution) Execute(ctx context.Context) error {
 }
 
 func (s *protectedStorage) WithinProtectedInspection(ctx context.Context, ops []access.ProtectedOperation, fn func(access.ProtectedInspectionStorage) error) error {
-	lock, err := transactionLockPath(ctx, s.db.projectPath)
+	lock, err := transactionLockPathSeam(ctx, s.db.projectPath)
 	if err != nil {
 		return err
 	}
@@ -214,7 +213,7 @@ func (s *protectedStorage) WithinProtectedInspection(ctx context.Context, ops []
 }
 
 func (s *protectedStorage) WithinProtectedExecution(ctx context.Context, ops []access.ProtectedOperation, fn func(access.ProtectedExecutionStorage) error) error {
-	lock, err := transactionLockPath(ctx, s.db.projectPath)
+	lock, err := transactionLockPathSeam(ctx, s.db.projectPath)
 	if err != nil {
 		return err
 	}
@@ -264,7 +263,7 @@ func (s *protectedStorage) WithinProtectedExecution(ctx context.Context, ops []a
 			return nil
 		}
 		if err := fn(exec); err != nil {
-			if rb := restoreSnapshots(snapshots); rb != nil {
+			if rb := restoreSnapshotsSeam(snapshots); rb != nil {
 				return fmt.Errorf("protected execution failed: %w; rollback failed: %v", err, rb)
 			}
 			return err
@@ -309,7 +308,7 @@ func withProtectedLock(ctx context.Context, path string, shared bool, fn func() 
 }
 
 func (s *protectedStorage) prepare(ctx context.Context, ro readonlyTx, ops []access.ProtectedOperation) ([]access.ProtectedEvidence, []map[string]any, error) {
-	if err := validateProtectedDefinition(ro.def); err != nil {
+	if err := validateProtectedDefSeam(ro.def); err != nil {
 		return nil, nil, err
 	}
 	evidence := make([]access.ProtectedEvidence, len(ops))
@@ -334,7 +333,7 @@ func (s *protectedStorage) prepare(ctx context.Context, ro readonlyTx, ops []acc
 		}
 		path := resolveRecordPath(col, key)
 		cols[i], keys[i] = col, key
-		raw, rawErr := os.ReadFile(path)
+		raw, rawErr := osReadFile(path)
 		if rawErr != nil && !os.IsNotExist(rawErr) {
 			return nil, nil, rawErr
 		}
@@ -346,7 +345,7 @@ func (s *protectedStorage) prepare(ctx context.Context, ro readonlyTx, ops []acc
 		}
 		var pre map[string]any
 		if exists {
-			pre, err = dalrecord.DataToMap(rec.Data())
+			pre, err = dataToMapSeam(rec.Data())
 			if err != nil {
 				return nil, nil, err
 			}
@@ -405,11 +404,11 @@ func (s *protectedStorage) assignBatchCandidateRevisions(ops []access.ProtectedO
 		case ingitdb.SingleRecord:
 			i := first
 			if ops[i].Action() != access.Delete && candidates[i] != nil {
-				raw, err = ingitdb.EncodeRecordContentForCollection(candidates[i], col)
+				raw, err = encodeRecordContentSeam(candidates[i], col)
 				exists = true
 			}
 		case ingitdb.MapOfRecords:
-			all, readErr := readMapOfRecordsFile(path, col.RecordFile.Format)
+			all, readErr := readMapOfRecordsFileSeam(path, col.RecordFile.Format)
 			if readErr != nil {
 				return readErr
 			}

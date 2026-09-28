@@ -64,7 +64,7 @@ func (r readwriteTx) snapshot(path string) error {
 	if _, ok := r.snapshots[path]; ok {
 		return nil
 	}
-	info, err := os.Stat(path)
+	info, err := osStat(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		r.snapshots[path] = fileSnapshot{}
 		return nil
@@ -72,7 +72,7 @@ func (r readwriteTx) snapshot(path string) error {
 	if err != nil {
 		return fmt.Errorf("snapshot stat %s: %w", path, err)
 	}
-	data, err := os.ReadFile(path)
+	data, err := osReadFile(path)
 	if err != nil {
 		return fmt.Errorf("snapshot read %s: %w", path, err)
 	}
@@ -236,7 +236,7 @@ func (r readwriteTx) Delete(_ context.Context, key *dalrecord2.Key) error {
 		}
 		return err
 	}
-	parentExists, err := foreignKeyTargetExists(colDef, recordKey)
+	parentExists, err := foreignKeyTargetExistsSeam(colDef, recordKey)
 	if err != nil {
 		return fmt.Errorf("dalgo2ingitdb: Delete foreign key lookup failed for parent collection %q key %q: %w", colDef.ID, recordKey, err)
 	}
@@ -255,7 +255,7 @@ func (r readwriteTx) Delete(_ context.Context, key *dalrecord2.Key) error {
 	}
 	switch colDef.RecordFile.RecordType {
 	case ingitdb.SingleRecord:
-		_, statErr := os.Stat(path)
+		_, statErr := osStat(path)
 		switch {
 		case statErr == nil:
 			// File exists; removing it is a real change to track for commit.
@@ -413,7 +413,7 @@ func applyFieldUpdate(root map[string]any, path []string, value any) error {
 	// Check for ServerTimestamp sentinel by identity comparison.
 	if value == update.ServerTimestamp {
 		value = time.Now().UTC().Format(time.RFC3339Nano)
-	} else if t, ok := dal.IsTransform(value); ok {
+	} else if t, ok := dalIsTransform(value); ok {
 		// Check for dal transforms (e.g. Increment).
 		if t.Name() == "increment" {
 			return applyIncrement(root, path, t.Value())

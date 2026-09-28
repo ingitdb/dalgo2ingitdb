@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"unicode"
 
@@ -52,7 +51,7 @@ func validateRecordPathSegment(id string) error {
 			return fmt.Errorf("dalgo2ingitdb: record ID %q contains a control character", id)
 		}
 	}
-	if runtime.GOOS == "windows" && isWindowsReservedName(id) {
+	if runtimeGOOS == "windows" && isWindowsReservedName(id) {
 		return fmt.Errorf("dalgo2ingitdb: record ID %q is a reserved Windows device name", id)
 	}
 	// Case-insensitive: on NTFS and default APFS "a%2fb" and "a%2Fb" name the
@@ -101,7 +100,7 @@ func validateRecordFileKey(colDef *ingitdb.CollectionDef, recordKey string) erro
 
 // requireContainedPath fails unless path is lexically strictly inside dir.
 func requireContainedPath(dir, path string) error {
-	rel, err := filepath.Rel(dir, path)
+	rel, err := filepathRel(dir, path)
 	if err != nil || rel == "." || !filepath.IsLocal(rel) {
 		return fmt.Errorf("dalgo2ingitdb: resolved path %q escapes %q", path, dir)
 	}
@@ -172,7 +171,7 @@ func writeSingleRecordFile(path string, colDef *ingitdb.CollectionDef, data map[
 		return fmt.Errorf("encode record for %s: %w", path, err)
 	}
 	return withExclusiveLock(path, func() error {
-		if err := os.WriteFile(path, content, 0o644); err != nil {
+		if err := osWriteFile(path, content, 0o644); err != nil {
 			return fmt.Errorf("write %s: %w", path, err)
 		}
 		return nil
@@ -220,7 +219,7 @@ func writeMapOfRecordsFile(path string, colDef *ingitdb.CollectionDef, data map[
 		return fmt.Errorf("encode records for %s: %w", path, err)
 	}
 	return withExclusiveLock(path, func() error {
-		if err := os.WriteFile(path, content, 0o644); err != nil {
+		if err := osWriteFile(path, content, 0o644); err != nil {
 			return fmt.Errorf("write %s: %w", path, err)
 		}
 		return nil

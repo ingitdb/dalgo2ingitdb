@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strings"
 
@@ -59,7 +58,7 @@ func NewOwnerPolicyController(projectPath string) (*OwnerPolicyController, error
 // Reload recovers the Git-authoritative generation into the working tree and
 // compiles one complete snapshot. It never exposes an underlying database.
 func (c *OwnerPolicyController) Reload(ctx context.Context) (OwnerPolicySnapshot, error) {
-	lock, err := transactionLockPath(ctx, c.projectPath)
+	lock, err := transactionLockPathSeam(ctx, c.projectPath)
 	if err != nil {
 		return OwnerPolicySnapshot{}, err
 	}
@@ -79,7 +78,7 @@ func (c *OwnerPolicyController) Reload(ctx context.Context) (OwnerPolicySnapshot
 		if err != nil || revision == "" {
 			return errors.New("dalgo2ingitdb: owner policy generation is not committed")
 		}
-		policies, err := access.LoadPolicyFiles(filepath.Join(c.projectPath, accessConfigDir), config)
+		policies, err := accessLoadPolicyFiles(filepath.Join(c.projectPath, accessConfigDir), config)
 		if err != nil {
 			return err
 		}
@@ -118,7 +117,7 @@ func recoverCommittedGeneration(ctx context.Context, root string) error {
 	if !isInsideGitWorkTree(ctx, root) {
 		return nil
 	}
-	lock, err := transactionLockPath(ctx, root)
+	lock, err := transactionLockPathSeam(ctx, root)
 	if err != nil {
 		return err
 	}
@@ -185,7 +184,7 @@ func recoverCommittedGenerationLocked(ctx context.Context, root string) error {
 		return readErr
 	}
 	generationBase := filepath.Join(root, accessConfigDir, "generations", active.Generation)
-	if info, statErr := os.Lstat(generationBase); statErr == nil {
+	if info, statErr := osLstat(generationBase); statErr == nil {
 		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return errors.New("dalgo2ingitdb: committed generation path is not a safe directory")
 		}
@@ -234,14 +233,14 @@ func materializeCommittedGeneration(root, revision string, blobs map[string][]by
 			return err
 		}
 	}
-	if err := syncDir(tmp); err != nil {
+	if err := syncDirSeam(tmp); err != nil {
 		return err
 	}
 	dest := filepath.Join(parent, revision)
-	if err := os.Rename(tmp, dest); err != nil {
+	if err := osRename(tmp, dest); err != nil {
 		return err
 	}
-	return syncDir(parent)
+	return syncDirSeam(parent)
 }
 
 func rejectSymlinkAncestors(root, path string) error {
@@ -252,7 +251,7 @@ func rejectSymlinkAncestors(root, path string) error {
 	current := root
 	for _, part := range strings.Split(rel, string(filepath.Separator)) {
 		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
+		info, err := osLstat(current)
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
@@ -267,11 +266,7 @@ func rejectSymlinkAncestors(root, path string) error {
 }
 
 func gitBlob(ctx context.Context, root, path string) ([]byte, error) {
-	out, err := exec.CommandContext(ctx, "git", "-C", root, "show", "HEAD:"+path).Output()
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
+	return gitShowBlob(ctx, root, path)
 }
 
 type generationPolicy struct {
@@ -298,20 +293,20 @@ type activeGenerationManifest struct {
 // expected active-generation comparison. expectedRevision is empty only for a
 // repository that has no active generation yet.
 func (c *OwnerPolicyController) Publish(ctx context.Context, candidate OwnerPolicyGeneration, expectedRevision, message string) (OwnerPolicyPublication, error) {
-	lock, err := transactionLockPath(ctx, c.projectPath)
+	lock, err := transactionLockPathSeam(ctx, c.projectPath)
 	if err != nil {
 		return OwnerPolicyPublication{}, err
 	}
 	var result OwnerPolicyPublication
 	err = withExclusiveLock(lock, func() error {
-		oldHead, hasHead, err := gitHead(ctx, c.projectPath)
+		oldHead, hasHead, err := gitHeadSeam(ctx, c.projectPath)
 		if err != nil {
 			return err
 		}
 		if !hasHead {
 			oldHead = ""
 		}
-		current, err := committedGenerationRevisionAt(ctx, c.projectPath, oldHead)
+		current, err := committedGenerationRevisionAtSeam(ctx, c.projectPath, oldHead)
 		if err != nil {
 			return err
 		}
@@ -336,7 +331,7 @@ func (c *OwnerPolicyController) Publish(ctx context.Context, candidate OwnerPoli
 		for _, policy := range manifest.Policies {
 			active.Policies = append(active.Policies, filepath.ToSlash(filepath.Join("generations", revision, policy.File)))
 		}
-		activeBytes, err := yaml.Marshal(active)
+		activeBytes, err := yamlMarshal(active)
 		if err != nil {
 			return err
 		}
@@ -387,7 +382,7 @@ func buildGeneration(candidate OwnerPolicyGeneration) (generationManifest, map[s
 		if doc.Target.Database != candidate.Database {
 			return generationManifest{}, nil, "", fmt.Errorf("dalgo2ingitdb: policy %q targets wrong database", id)
 		}
-		canonical, err := access.MarshalDTQLPolicyJSON(doc)
+		canonical, err := accessMarshalDTQLPolicyJSON(doc)
 		if err != nil {
 			return generationManifest{}, nil, "", err
 		}
@@ -396,7 +391,7 @@ func buildGeneration(candidate OwnerPolicyGeneration) (generationManifest, map[s
 		if _, duplicate := sources[file]; duplicate {
 			return generationManifest{}, nil, "", fmt.Errorf("dalgo2ingitdb: duplicate policy id %q", id)
 		}
-		source, err := access.MarshalDTQLPolicyYAML(doc)
+		source, err := accessMarshalDTQLPolicyYAML(doc)
 		if err != nil {
 			return generationManifest{}, nil, "", err
 		}
@@ -404,7 +399,7 @@ func buildGeneration(candidate OwnerPolicyGeneration) (generationManifest, map[s
 		manifest.Policies = append(manifest.Policies, generationPolicy{ID: id, File: file, Digest: digest})
 	}
 	sort.Slice(manifest.Policies, func(i, j int) bool { return manifest.Policies[i].ID < manifest.Policies[j].ID })
-	encoded, err := yaml.Marshal(manifest)
+	encoded, err := yamlMarshal(manifest)
 	if err != nil {
 		return generationManifest{}, nil, "", err
 	}
@@ -414,7 +409,7 @@ func buildGeneration(candidate OwnerPolicyGeneration) (generationManifest, map[s
 func materializeGeneration(root, revision string, manifest generationManifest, sources map[string][]byte) ([]string, error) {
 	base := filepath.Join(root, accessConfigDir, "generations", revision)
 	manifestBytes, _ := yaml.Marshal(manifest)
-	if info, err := os.Lstat(base); err == nil && info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+	if info, err := osLstat(base); err == nil && info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
 		if err := verifyGeneration(base, revision); err != nil {
 			return nil, fmt.Errorf("dalgo2ingitdb: existing generation invalid: %w", err)
 		}
@@ -447,19 +442,19 @@ func materializeGeneration(root, revision string, manifest generationManifest, s
 		return nil, err
 	}
 	paths = append(paths, filepath.Join(base, "manifest.yaml"))
-	if err := syncDir(tmp); err != nil {
+	if err := syncDirSeam(tmp); err != nil {
 		return nil, err
 	}
 	if err := ownerPolicyPublicationHook("generation_files_synced"); err != nil {
 		return nil, err
 	}
-	if err := os.Rename(tmp, base); err != nil {
+	if err := osRename(tmp, base); err != nil {
 		return nil, err
 	}
 	if err := ownerPolicyPublicationHook("generation_renamed"); err != nil {
 		return nil, err
 	}
-	if err := syncDir(parent); err != nil {
+	if err := syncDirSeam(parent); err != nil {
 		return nil, err
 	}
 	if err := ownerPolicyPublicationHook("generation_parent_synced"); err != nil {
@@ -474,12 +469,12 @@ func verifyGeneration(base, revision string) error {
 }
 
 func readAndVerifyGeneration(base, revision string) (generationManifest, error) {
-	baseInfo, err := os.Lstat(base)
+	baseInfo, err := osLstat(base)
 	if err != nil || !baseInfo.IsDir() || baseInfo.Mode()&os.ModeSymlink != 0 {
 		return generationManifest{}, errors.New("generation must be a non-symlink directory")
 	}
 	manifestPath := filepath.Join(base, "manifest.yaml")
-	manifestInfo, err := os.Lstat(manifestPath)
+	manifestInfo, err := osLstat(manifestPath)
 	if err != nil || !manifestInfo.Mode().IsRegular() || manifestInfo.Mode()&os.ModeSymlink != 0 {
 		return generationManifest{}, errors.New("generation manifest must be a regular non-symlink file")
 	}
@@ -499,7 +494,7 @@ func readAndVerifyGeneration(base, revision string) (generationManifest, error) 
 	if m.APIVersion != generationAPIVersion {
 		return generationManifest{}, errors.New("unsupported generation apiVersion")
 	}
-	policiesInfo, err := os.Lstat(filepath.Join(base, "policies"))
+	policiesInfo, err := osLstat(filepath.Join(base, "policies"))
 	if err != nil || !policiesInfo.IsDir() || policiesInfo.Mode()&os.ModeSymlink != 0 {
 		return generationManifest{}, errors.New("generation policies must be a non-symlink directory")
 	}
@@ -508,7 +503,7 @@ func readAndVerifyGeneration(base, revision string) (generationManifest, error) 
 			return generationManifest{}, errors.New("unsafe generation policy reference")
 		}
 		policyPath := filepath.Join(base, filepath.FromSlash(p.File))
-		info, err := os.Lstat(policyPath)
+		info, err := osLstat(policyPath)
 		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 			return generationManifest{}, fmt.Errorf("policy %q must be a regular non-symlink file", p.ID)
 		}
@@ -529,7 +524,7 @@ func readAndVerifyGeneration(base, revision string) (generationManifest, error) 
 }
 
 func committedGenerationRevision(ctx context.Context, root string) (string, error) {
-	return committedGenerationRevisionAt(ctx, root, "HEAD")
+	return committedGenerationRevisionAtSeam(ctx, root, "HEAD")
 }
 
 func committedGenerationRevisionAt(ctx context.Context, root, ref string) (string, error) {
@@ -581,7 +576,7 @@ func requireCleanAccessTree(ctx context.Context, root string) error {
 			allowedGenerationPrefixes = append(allowedGenerationPrefixes, filepath.ToSlash(filepath.Join(accessConfigDir, "generations", entry.Name()))+"/")
 		}
 	}
-	err = filepath.WalkDir(base, func(path string, entry os.DirEntry, walkErr error) error {
+	err = filepathWalkDir(base, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -591,7 +586,7 @@ func requireCleanAccessTree(ctx context.Context, root string) error {
 		if entry.Type()&os.ModeSymlink != 0 {
 			return fmt.Errorf("dalgo2ingitdb: policy/config subtree contains symlink %q", path)
 		}
-		rel, err := filepath.Rel(root, path)
+		rel, err := filepathRel(root, path)
 		if err != nil {
 			return err
 		}
@@ -623,7 +618,7 @@ func atomicWriteFile(name string, data []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(name), 0755); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(filepath.Dir(name), ".tmp-")
+	f, err := osCreateTemp(filepath.Dir(name), ".tmp-")
 	if err != nil {
 		return err
 	}
@@ -642,10 +637,10 @@ func atomicWriteFile(name string, data []byte, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	if err = os.Rename(tmp, name); err != nil {
+	if err = osRename(tmp, name); err != nil {
 		return err
 	}
-	return syncDir(filepath.Dir(name))
+	return syncDirSeam(filepath.Dir(name))
 }
 
 // syncDir flushes a directory entry change to stable storage. Windows cannot
@@ -653,7 +648,7 @@ func atomicWriteFile(name string, data []byte, mode os.FileMode) error {
 // "Access is denied") and NTFS journals directory metadata itself, so it is a
 // no-op there.
 func syncDir(name string) error {
-	if runtime.GOOS == "windows" {
+	if runtimeGOOS == "windows" {
 		return nil
 	}
 	f, err := os.Open(name)
@@ -664,7 +659,7 @@ func syncDir(name string) error {
 	return f.Sync()
 }
 func gitCommitPolicyCAS(ctx context.Context, root string, paths []string, active []byte, message, expectedHead string) (string, error) {
-	index, err := os.CreateTemp("", "dalgo2ingitdb-policy-index-")
+	index, err := osCreateTemp("", "dalgo2ingitdb-policy-index-")
 	if err != nil {
 		return "", err
 	}
@@ -673,9 +668,7 @@ func gitCommitPolicyCAS(ctx context.Context, root string, paths []string, active
 	defer func() { _ = os.Remove(indexPath) }()
 	env := append(os.Environ(), "GIT_INDEX_FILE="+indexPath)
 	run := func(args ...string) ([]byte, error) {
-		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
-		cmd.Env = env
-		return cmd.CombinedOutput()
+		return gitCmdRun(ctx, root, env, args...)
 	}
 	if expectedHead != "" {
 		if out, err := run("read-tree", expectedHead); err != nil {
@@ -691,9 +684,7 @@ func gitCommitPolicyCAS(ctx context.Context, root string, paths []string, active
 	if out, err := run(args...); err != nil {
 		return "", fmt.Errorf("stage policy generation: %w: %s", err, out)
 	}
-	blobCmd := exec.CommandContext(ctx, "git", "-C", root, "hash-object", "-w", "--stdin")
-	blobCmd.Stdin = bytes.NewReader(active)
-	blobOut, err := blobCmd.CombinedOutput()
+	blobOut, err := gitCmdRunStdin(ctx, root, env, bytes.NewReader(active), "hash-object", "-w", "--stdin")
 	if err != nil {
 		return "", fmt.Errorf("store active manifest blob: %w: %s", err, blobOut)
 	}
@@ -709,10 +700,7 @@ func gitCommitPolicyCAS(ctx context.Context, root string, paths []string, active
 	if expectedHead != "" {
 		cargs = append(cargs, "-p", expectedHead)
 	}
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, cargs...)...)
-	cmd.Env = env
-	cmd.Stdin = strings.NewReader(message + "\n")
-	commit, err := cmd.CombinedOutput()
+	commit, err := gitCmdRunStdin(ctx, root, env, strings.NewReader(message+"\n"), cargs...)
 	if err != nil {
 		return "", fmt.Errorf("create policy commit: %w: %s", err, commit)
 	}

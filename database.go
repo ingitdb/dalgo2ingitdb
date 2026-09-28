@@ -111,7 +111,7 @@ func NewDatabase(projectPath string, reader ingitdb.CollectionsReader, options .
 	if !info.IsDir() {
 		return nil, fmt.Errorf("dalgo2ingitdb: %s is not a directory", projectPath)
 	}
-	if err := recoverCommittedGeneration(context.Background(), projectPath); err != nil {
+	if err := recoverCommittedGenerationSeam(context.Background(), projectPath); err != nil {
 		return nil, err
 	}
 	var settings databaseOptions
@@ -147,14 +147,14 @@ func NewDatabase(projectPath string, reader ingitdb.CollectionsReader, options .
 	state := &atomic.Pointer[OwnerPolicySnapshot]{}
 	state.Store(&OwnerPolicySnapshot{Config: config, Policies: append([]access.Policy(nil), policies...)})
 	secureOption := access.WithDatabasePolicies(policies...)
-	if revision, revisionErr := workingGenerationRevision(projectPath); revisionErr != nil {
+	if revision, revisionErr := workingGenerationRevisionSeam(projectPath); revisionErr != nil {
 		return nil, revisionErr
 	} else if revision != "" {
-		controller, err = NewOwnerPolicyController(projectPath)
+		controller, err = newOwnerPolicyControllerSeam(projectPath)
 		if err != nil {
 			return nil, err
 		}
-		snapshot, reloadErr := controller.Reload(context.Background())
+		snapshot, reloadErr := controllerReloadSeam(controller, context.Background())
 		if reloadErr != nil {
 			return nil, reloadErr
 		}
@@ -167,7 +167,7 @@ func NewDatabase(projectPath string, reader ingitdb.CollectionsReader, options .
 			return append([]access.Policy(nil), current.Policies...), nil
 		})
 	}
-	secured, err := access.SecureDB(db, secureOption)
+	secured, err := accessSecureDBSeam(db, secureOption)
 	if err != nil {
 		return nil, fmt.Errorf("dalgo2ingitdb: secure database: %w", err)
 	}
@@ -196,7 +196,7 @@ func (db *securedDatabase) ReloadOwnerPolicies(ctx context.Context) (string, err
 		return "", errors.New("dalgo2ingitdb: owner policy generations are not enabled")
 	}
 	db.ownerState.Store(nil)
-	snapshot, err := db.controller.Reload(ctx)
+	snapshot, err := controllerReloadSeam(db.controller, ctx)
 	if err != nil {
 		db.ownerState.Store(nil)
 		return "", err
@@ -218,9 +218,9 @@ func (db *securedDatabase) PublishOwnerPolicyGeneration(ctx context.Context, can
 	// Operations that already pinned a provider snapshot are the task-17
 	// coordinator boundary and remain intentionally outside this storage slice.
 	db.ownerState.Store(nil)
-	publication, err := db.controller.Publish(ctx, candidate, expectedRevision, message)
+	publication, err := controllerPublishSeam(db.controller, ctx, candidate, expectedRevision, message)
 	if err != nil {
-		snapshot, reloadErr := db.controller.Reload(ctx)
+		snapshot, reloadErr := controllerReloadSeam(db.controller, ctx)
 		if reloadErr != nil {
 			db.ownerState.Store(nil)
 			return publication, fmt.Errorf("%v; authoritative policy reload failed closed: %w", err, reloadErr)
@@ -228,7 +228,7 @@ func (db *securedDatabase) PublishOwnerPolicyGeneration(ctx context.Context, can
 		db.ownerState.Store(&snapshot)
 		return publication, err
 	}
-	snapshot, err := db.controller.Reload(ctx)
+	snapshot, err := controllerReloadSeam(db.controller, ctx)
 	if err != nil {
 		db.ownerState.Store(nil)
 		return publication, fmt.Errorf("dalgo2ingitdb: policy committed; live activation requires reload: %w", err)
@@ -352,7 +352,7 @@ func (db *Database) RunReadwriteTransaction(ctx context.Context, f dal.RWTxWorke
 	// optional Git ref update. It serialises cooperating Database writers for
 	// the complete transaction; Git/editor processes that ignore advisory locks
 	// remain outside this adapter's explicit single-writer contract.
-	lockPath, err := transactionLockPath(ctx, db.projectPath)
+	lockPath, err := transactionLockPathSeam(ctx, db.projectPath)
 	if err != nil {
 		return err
 	}
@@ -362,7 +362,7 @@ func (db *Database) RunReadwriteTransaction(ctx context.Context, f dal.RWTxWorke
 }
 
 func (db *Database) withTransactionReadLock(ctx context.Context, fn func() error) error {
-	lockPath, err := transactionLockPath(ctx, db.projectPath)
+	lockPath, err := transactionLockPathSeam(ctx, db.projectPath)
 	if err != nil {
 		return err
 	}
@@ -378,22 +378,22 @@ func transactionLockPath(ctx context.Context, projectPath string) (string, error
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(projectPath, path)
 		}
-		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		if err := osMkdirAll(filepath.Dir(path), 0o700); err != nil {
 			return "", fmt.Errorf("dalgo2ingitdb: create Git transaction lock directory: %w", err)
 		}
 		return path, nil
 	}
-	abs, err := filepath.Abs(projectPath)
+	abs, err := filepathAbs(projectPath)
 	if err != nil {
 		return "", fmt.Errorf("dalgo2ingitdb: resolve project path for transaction lock: %w", err)
 	}
-	cacheDir, err := os.UserCacheDir()
+	cacheDir, err := userCacheDir()
 	if err != nil {
 		return "", fmt.Errorf("dalgo2ingitdb: resolve cache transaction lock directory: %w", err)
 	}
 	hash := sha256.Sum256([]byte(abs))
 	path := filepath.Join(cacheDir, "dalgo2ingitdb", "locks", fmt.Sprintf("%x.lock", hash[:]))
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := osMkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return "", fmt.Errorf("dalgo2ingitdb: create cached transaction lock directory: %w", err)
 	}
 	return path, nil
@@ -409,14 +409,14 @@ func (db *Database) runReadwriteTransaction(ctx context.Context, f dal.RWTxWorke
 	snapshots := make(map[string]fileSnapshot)
 	tx := readwriteTx{readonlyTx: readonlyTx{db: db, def: def, opts: opts}, written: written, snapshots: snapshots}
 	if err = f(ctx, tx); err != nil {
-		if rollbackErr := restoreSnapshots(snapshots); rollbackErr != nil {
+		if rollbackErr := restoreSnapshotsSeam(snapshots); rollbackErr != nil {
 			return fmt.Errorf("transaction failed: %w; rollback failed: %v", err, rollbackErr)
 		}
 		return err
 	}
 	if msg := opts.Message(); msg != "" && len(*written) > 0 {
 		if err = gitCommitPaths(ctx, db.projectPath, *written, msg); err != nil {
-			if rollbackErr := restoreSnapshots(snapshots); rollbackErr != nil {
+			if rollbackErr := restoreSnapshotsSeam(snapshots); rollbackErr != nil {
 				return fmt.Errorf("commit failed: %w; rollback failed: %v", err, rollbackErr)
 			}
 			return err

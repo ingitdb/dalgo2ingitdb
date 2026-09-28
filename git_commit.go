@@ -68,25 +68,20 @@ func gitCommitPaths(ctx context.Context, repoDir string, paths []string, message
 			staged[i] = abs
 		}
 	}
-	index, err := os.CreateTemp("", "dalgo2ingitdb-index-*")
+	index, err := osCreateTemp("", "dalgo2ingitdb-index-*")
 	if err != nil {
 		return fmt.Errorf("dalgo2ingitdb: create temporary index: %w", err)
 	}
 	indexPath := index.Name()
-	if err := index.Close(); err != nil {
-		_ = os.Remove(indexPath)
-		return fmt.Errorf("dalgo2ingitdb: close temporary index: %w", err)
-	}
+	_ = index.Close()
 	defer func() { _ = os.Remove(indexPath) }()
 
 	env := append(os.Environ(), "GIT_INDEX_FILE="+indexPath)
 	run := func(args ...string) ([]byte, error) {
-		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", repoDir}, args...)...)
-		cmd.Env = env
-		return cmd.CombinedOutput()
+		return gitCmdRun(ctx, repoDir, env, args...)
 	}
 
-	oldHead, hasHead, err := gitHead(ctx, repoDir)
+	oldHead, hasHead, err := gitHeadSeam(ctx, repoDir)
 	if err != nil {
 		return err
 	}
