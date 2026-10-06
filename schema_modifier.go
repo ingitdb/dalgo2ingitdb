@@ -168,6 +168,13 @@ func (db *Database) AlterCollection(ctx context.Context, name string, ops ...ddl
 					Cause:        err,
 				}
 			}
+			if ap.colDef.SourceSchema != nil && ap.colDef.SourceSchema.KeyMode == "" && !ap.sourceFieldsUpdated {
+				// Ordinary DDL edits may change the declared source type while the
+				// native carrier type stays the same (for example Decimal and
+				// String both use string). Discard stale source field hints.
+				ap.colDef.SourceSchema.Fields = nil
+			}
+			ap.sourceFieldsUpdated = false
 			// Flush after every op so a later failure leaves a consistent
 			// definition.yaml on disk.
 			if err := writeCollectionDefYAML(defPath, ap.colDef); err != nil {
@@ -188,12 +195,13 @@ func (db *Database) AlterCollection(ctx context.Context, name string, ops ...ddl
 
 // applier implements ddl.Applier for AlterCollection dispatch.
 type applier struct {
-	db           *Database
-	colName      string
-	colDef       *ingitdb.CollectionDef
-	defPath      string
-	recordsDir   string
-	recordFormat ingitdb.RecordFormat
+	db                  *Database
+	colName             string
+	colDef              *ingitdb.CollectionDef
+	defPath             string
+	recordsDir          string
+	recordFormat        ingitdb.RecordFormat
+	sourceFieldsUpdated bool
 }
 
 func (a *applier) ApplyAddField(_ context.Context, f dbschema.FieldDef, opts ddl.Options) error {
@@ -246,6 +254,22 @@ func (a *applier) ApplyModifyField(_ context.Context, name dal.FieldName, newDef
 	colType, err := dbschemaTypeToIngitdb(newDef.Type)
 	if err != nil {
 		return fmt.Errorf("ModifyField %q: %w", oldName, err)
+	}
+	if newDef.Name == "" {
+		newDef.Name = name
+	}
+	if a.colDef.SourceSchema != nil && a.colDef.SourceSchema.KeyMode == "" {
+		mapped, err := buildIngitdbCollectionDef(dbschema.CollectionDef{Fields: []dbschema.FieldDef{newDef}})
+		if err != nil {
+			return fmt.Errorf("ModifyField %q source metadata: %w", oldName, err)
+		}
+		for i, sourceField := range a.colDef.SourceSchema.Fields {
+			if sourceField.Name == oldName {
+				a.colDef.SourceSchema.Fields[i] = mapped.SourceSchema.Fields[0]
+				a.sourceFieldsUpdated = true
+				break
+			}
+		}
 	}
 	col.Type = colType
 	col.Required = !newDef.Nullable

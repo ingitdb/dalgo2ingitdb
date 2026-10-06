@@ -9,6 +9,7 @@ import (
 
 	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/dalgo/dbschema"
+	"github.com/dal-go/dalgo/ddl"
 	"github.com/ingitdb/ingitdb-go/ingitdb"
 	"gopkg.in/yaml.v3"
 )
@@ -76,6 +77,57 @@ func TestExportDefinitionRoundTripsRelationalSchema(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(listed, source.Indexes) {
 		t.Fatalf("ListIndexes = %+v, %v", listed, err)
 	}
+}
+
+func TestCreateAndAlterDecimalSourceTypeHints(t *testing.T) {
+	root := t.TempDir()
+	db, err := NewDatabase(root, newReader())
+	if err != nil {
+		t.Fatal(err)
+	}
+	modifier, ok := dal.As[ddl.SchemaModifier](db)
+	if !ok {
+		t.Fatal("schema modifier unavailable")
+	}
+	reader, ok := dal.As[dbschema.SchemaReader](db)
+	if !ok {
+		t.Fatal("schema reader unavailable")
+	}
+	precision := &dbschema.Precision{Total: 30, Scale: 8}
+	definition := dbschema.CollectionDef{Name: "amounts", Fields: []dbschema.FieldDef{{Name: "value", Type: dbschema.Decimal, Precision: precision}}}
+	if err := modifier.CreateCollection(context.Background(), definition); err != nil {
+		t.Fatal(err)
+	}
+	ref := dal.NewRootCollectionRef("amounts", "")
+	assertField := func(want dbschema.Type, wantPrecision bool) {
+		t.Helper()
+		got, err := reader.DescribeCollection(context.Background(), &ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Fields) != 1 || got.Fields[0].Type != want {
+			t.Fatalf("field type: %+v", got.Fields)
+		}
+		if wantPrecision && !reflect.DeepEqual(got.Fields[0].Precision, precision) {
+			t.Fatalf("precision: %+v", got.Fields[0].Precision)
+		}
+	}
+	assertField(dbschema.Decimal, true)
+	if err := modifier.AlterCollection(context.Background(), "amounts", ddl.ModifyField("value", dbschema.FieldDef{Type: dbschema.Decimal, Precision: precision})); err != nil {
+		t.Fatal(err)
+	}
+	assertField(dbschema.Decimal, true)
+	if err := modifier.AlterCollection(context.Background(), "amounts", ddl.ModifyField("value", dbschema.FieldDef{Name: "value", Type: dbschema.Decimal, Default: dbschema.DefaultLiteral{Value: struct{}{}}})); err == nil {
+		t.Fatal("unsupported modified default accepted")
+	}
+	if err := modifier.AlterCollection(context.Background(), "amounts", ddl.ModifyField("value", dbschema.FieldDef{Name: "value", Type: dbschema.String})); err != nil {
+		t.Fatal(err)
+	}
+	assertField(dbschema.String, false)
+	if err := modifier.AlterCollection(context.Background(), "amounts", ddl.ModifyField("value", dbschema.FieldDef{Name: "value", Type: dbschema.Decimal, Precision: precision})); err != nil {
+		t.Fatal(err)
+	}
+	assertField(dbschema.Decimal, true)
 }
 
 func TestDescribeImportedTypedCSVExcludesTransportID(t *testing.T) {

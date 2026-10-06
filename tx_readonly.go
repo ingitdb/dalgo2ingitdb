@@ -87,6 +87,10 @@ func (r readonlyTx) Get(ctx context.Context, record dalrecord2.Record) error {
 		}
 		record.SetError(nil)
 		normalized := ingitdb.ApplyLocaleToRead(recordData, colDef.Columns)
+		if err := decodeSourceTransport(colDef, normalized); err != nil {
+			record.SetError(err)
+			return err
+		}
 		computed, computeErr := r.applyDerivedValues(normalized, colDef, recordKey)
 		if computeErr != nil {
 			record.SetError(computeErr)
@@ -97,6 +101,30 @@ func (r readonlyTx) Get(ctx context.Context, record dalrecord2.Record) error {
 			return err
 		}
 		return nil
+	case ingitdb.ListOfRecords:
+		allRecords, readErr := readAllListStored(colDef)
+		if readErr != nil {
+			record.SetError(readErr)
+			return readErr
+		}
+		for _, item := range allRecords {
+			if item.Key != recordKey {
+				continue
+			}
+			computed, computeErr := r.applyDerivedValues(item.Stored, colDef, recordKey)
+			if computeErr != nil {
+				record.SetError(computeErr)
+				return computeErr
+			}
+			if err := dalrecord2.MapToData(record.Data(), computed); err != nil {
+				record.SetError(err)
+				return err
+			}
+			record.SetError(nil)
+			return nil
+		}
+		record.SetError(dalrecord2.ErrRecordNotFound)
+		return dalrecord2.ErrRecordNotFound
 	default:
 		return fmt.Errorf("dalgo2ingitdb: Get not implemented for record type %q", colDef.RecordFile.RecordType)
 	}
@@ -131,6 +159,17 @@ func (r readonlyTx) Exists(_ context.Context, key *dalrecord2.Key) (bool, error)
 		}
 		_, exists := allRecords[recordKey]
 		return exists, nil
+	case ingitdb.ListOfRecords:
+		allRecords, readErr := readAllListStored(colDef)
+		if readErr != nil {
+			return false, readErr
+		}
+		for _, item := range allRecords {
+			if item.Key == recordKey {
+				return true, nil
+			}
+		}
+		return false, nil
 	default:
 		return false, fmt.Errorf("dalgo2ingitdb: Exists not implemented for record type %q", colDef.RecordFile.RecordType)
 	}

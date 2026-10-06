@@ -157,6 +157,15 @@ func (db *Database) DescribeCollection(_ context.Context, ref *dal.CollectionRef
 		// Generic DDL edits can add or drop fields after creation. Exported
 		// snapshots are immutable and must retain exact source-field order.
 		strictSource := schema.KeyMode != ""
+		sourceFieldsMatch := len(schema.Fields) == len(fields)
+		if sourceFieldsMatch {
+			for i, sourceField := range schema.Fields {
+				if sourceField.Name != string(fields[i].Name) {
+					sourceFieldsMatch = false
+					break
+				}
+			}
+		}
 		if strictSource && len(schema.Fields) != len(fields) {
 			return nil, fmt.Errorf("dalgo2ingitdb: describe %q: source schema fields do not match columns", name)
 		}
@@ -164,7 +173,7 @@ func (db *Database) DescribeCollection(_ context.Context, ref *dal.CollectionRef
 		for i, field := range fields {
 			fieldPositions[string(field.Name)] = i
 		}
-		if strictSource {
+		if strictSource || sourceFieldsMatch {
 			for i, sourceField := range schema.Fields {
 				fieldIndex, exists := fieldPositions[sourceField.Name]
 				if !exists {
