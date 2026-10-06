@@ -248,7 +248,12 @@ func TestGitCommit_Gaps(t *testing.T) {
 	if out, err := exec.Command("git", "-C", tempDir, "add", ".").CombinedOutput(); err != nil {
 		t.Fatalf("seed git add: %v: %s", err, out)
 	}
-	if out, err := exec.Command("git", "-C", tempDir, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "init").CombinedOutput(); err != nil {
+	for _, setting := range [][2]string{{"user.name", "Test"}, {"user.email", "test@example.invalid"}} {
+		if out, err := exec.Command("git", "-C", tempDir, "config", "--local", setting[0], setting[1]).CombinedOutput(); err != nil {
+			t.Fatalf("seed git identity %s: %v: %s", setting[0], err, out)
+		}
+	}
+	if out, err := exec.Command("git", "-C", tempDir, "commit", "-m", "init").CombinedOutput(); err != nil {
 		t.Fatalf("seed git commit: %v: %s", err, out)
 	}
 
