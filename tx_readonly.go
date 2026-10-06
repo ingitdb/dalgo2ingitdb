@@ -87,6 +87,10 @@ func (r readonlyTx) Get(ctx context.Context, record dalrecord2.Record) error {
 		}
 		record.SetError(nil)
 		normalized := ingitdb.ApplyLocaleToRead(recordData, colDef.Columns)
+		if err := decodeSourceTransport(colDef, normalized); err != nil {
+			record.SetError(err)
+			return err
+		}
 		computed, computeErr := r.applyDerivedValues(normalized, colDef, recordKey)
 		if computeErr != nil {
 			record.SetError(computeErr)
@@ -97,6 +101,30 @@ func (r readonlyTx) Get(ctx context.Context, record dalrecord2.Record) error {
 			return err
 		}
 		return nil
+	case ingitdb.ListOfRecords:
+		allRecords, readErr := readAllListStored(colDef)
+		if readErr != nil {
+			record.SetError(readErr)
+			return readErr
+		}
+		for _, item := range allRecords {
+			if item.Key != recordKey {
+				continue
+			}
+			computed, computeErr := r.applyDerivedValues(item.Stored, colDef, recordKey)
+			if computeErr != nil {
+				record.SetError(computeErr)
+				return computeErr
+			}
+			if err := dalrecord2.MapToData(record.Data(), computed); err != nil {
+				record.SetError(err)
+				return err
+			}
+			record.SetError(nil)
+			return nil
+		}
+		record.SetError(dalrecord2.ErrRecordNotFound)
+		return dalrecord2.ErrRecordNotFound
 	default:
 		return fmt.Errorf("dalgo2ingitdb: Get not implemented for record type %q", colDef.RecordFile.RecordType)
 	}
@@ -131,6 +159,17 @@ func (r readonlyTx) Exists(_ context.Context, key *dalrecord2.Key) (bool, error)
 		}
 		_, exists := allRecords[recordKey]
 		return exists, nil
+	case ingitdb.ListOfRecords:
+		allRecords, readErr := readAllListStored(colDef)
+		if readErr != nil {
+			return false, readErr
+		}
+		for _, item := range allRecords {
+			if item.Key == recordKey {
+				return true, nil
+			}
+		}
+		return false, nil
 	default:
 		return false, fmt.Errorf("dalgo2ingitdb: Exists not implemented for record type %q", colDef.RecordFile.RecordType)
 	}
@@ -168,11 +207,26 @@ func (r readonlyTx) ExecuteQueryToRecordsReader(ctx context.Context, query dal.Q
 // registered via recordset.NewComputedColumn bound to a Starlark-backed
 // evaluator, so computed values resolve lazily — only when a consumer reads
 // them — never eagerly baked here.
-func (r readonlyTx) ExecuteQueryToRecordsetReader(_ context.Context, query dal.Query, _ ...recordset.Option) (dal.RecordsetReader, error) {
+func (r readonlyTx) ExecuteQueryToRecordsetReader(ctx context.Context, query dal.Query, _ ...recordset.Option) (dal.RecordsetReader, error) {
 	// GROUP BY produces a dynamically-shaped result that cannot be represented
 	// by the typed recordset schema; report as unsupported so callers can skip.
 	if sq, ok := query.(dal.StructuredQuery); ok && len(sq.GroupBy()) > 0 {
 		return nil, fmt.Errorf("dalgo2ingitdb: GROUP BY not supported in recordset reader: %w", dal.ErrNotSupported)
+	}
+	// Explicit SELECT projections have a different shape from the source
+	// collection. Reuse the records query path for filtering, ordering, and
+	// expression evaluation, then build a recordset with exactly those names.
+	if sq, ok := query.(dal.StructuredQuery); ok && len(sq.Columns()) > 0 {
+		projected := true
+		for _, column := range sq.Columns() {
+			if column.Wildcard != nil {
+				projected = false
+				break
+			}
+		}
+		if projected {
+			return r.projectedRecordset(ctx, query, sq.Columns())
+		}
 	}
 	colDef, err := collectionFromQuery(r.def, query)
 	if err != nil {
@@ -215,3 +269,46 @@ func (r readonlyTx) resolveCollection(key *dalrecord2.Key) (*ingitdb.CollectionD
 }
 
 var _ dal.ReadTransaction = (*readonlyTx)(nil)
+
+func (r readonlyTx) projectedRecordset(ctx context.Context, query dal.Query, columns []dal.Column) (dal.RecordsetReader, error) {
+	reader, err := executeQueryToRecordsReader(ctx, r, query)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = reader.Close() }()
+	return projectRecordsFromReader(reader, columns)
+}
+
+func projectRecordsFromReader(reader dal.RecordsReader, columns []dal.Column) (dal.RecordsetReader, error) {
+	names := make([]string, len(columns))
+	cols := make([]recordset.Column[any], len(columns))
+	for i, column := range columns {
+		names[i] = columnOutKey(column)
+		cols[i] = &anyColumn{name: names[i]}
+	}
+	rs := recordset.NewColumnarRecordset("query", cols...)
+	if err := fillProjectedRows(reader, rs, names); err != nil {
+		return nil, err
+	}
+	return NewRecordsetReader(rs), nil
+}
+
+func fillProjectedRows(reader dal.RecordsReader, rs *recordset.ColumnarRecordset, names []string) error {
+	for {
+		rec, err := reader.Next()
+		if errors.Is(err, dal.ErrNoMoreRecords) {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		row := rs.NewRow()
+		data, _ := rec.Data().(map[string]any)
+		for _, name := range names {
+			if err := row.SetValueByName(name, data[name], rs); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}

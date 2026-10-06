@@ -51,10 +51,8 @@ func ingitdbTypeToDBSchema(t ingitdb.ColumnType) (dbschema.Type, error) {
 //   - dbschema.Time → ingitdb.ColumnTypeDateTime (the most general time
 //     type). Callers that need date- or time-of-day-only granularity must
 //     override the type manually after a round-trip.
-//   - dbschema.Decimal → ingitdb.ColumnTypeFloat. inGitDB has no native
-//     fixed-precision decimal column type; values are stored as YAML
-//     doubles which round-trip cleanly for typical money/measurement
-//     scales but can lose precision at very high precision/scale.
+//   - dbschema.Decimal → ingitdb.ColumnTypeString. Native storage preserves
+//     exact decimal text, and source_schema retains the logical decimal type.
 //   - dbschema.Bytes → ingitdb.ColumnTypeString. inGitDB stores binary
 //     data base64-encoded in string columns (caller-side encoding;
 //     the column type is the carrier).
@@ -67,8 +65,8 @@ func dbschemaTypeToIngitdb(t dbschema.Type) (ingitdb.ColumnType, error) {
 	case dbschema.Float:
 		return ingitdb.ColumnTypeFloat, nil
 	case dbschema.Decimal:
-		// Lossy: no native fixed-precision decimal in inGitDB; YAML doubles.
-		return ingitdb.ColumnTypeFloat, nil
+		// Preserve the exact decimal text; source_schema records its logical type.
+		return ingitdb.ColumnTypeString, nil
 	case dbschema.String:
 		return ingitdb.ColumnTypeString, nil
 	case dbschema.Bytes:

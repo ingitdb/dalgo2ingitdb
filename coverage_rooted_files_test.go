@@ -49,12 +49,12 @@ func TestRootedFiles_EnsureDir_Gaps(t *testing.T) {
 	if err := os.Mkdir(readOnly, 0o555); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chmod(readOnly, 0o755)
+	defer func() { _ = os.Chmod(readOnly, 0o755) }()
 	roRoot, err := os.OpenRoot(readOnly)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer roRoot.Close()
+	defer func() { _ = roRoot.Close() }()
 	fRO := &RootedFiles{root: roRoot}
 	if err := fRO.ensureTopLevelDir("newdir", 0o755); err == nil {
 		t.Fatal("ensureTopLevelDir mkdir in read-only want error")
@@ -76,12 +76,12 @@ func TestRootedFiles_EnsureDir_Gaps(t *testing.T) {
 	if err := os.Mkdir(noPermDir, 0o000); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chmod(noPermDir, 0o755)
+	defer func() { _ = os.Chmod(noPermDir, 0o755) }()
 	normalRoot, err := os.OpenRoot(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer normalRoot.Close()
+	defer func() { _ = normalRoot.Close() }()
 	fNormal := &RootedFiles{root: normalRoot}
 	if err := fNormal.ensureTopLevelDir("noperm", 0o755); err == nil {
 		t.Fatal("ensureTopLevelDir open 0o000 want error")
@@ -185,7 +185,7 @@ func TestRootedFiles_JSONL_Gaps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	fReal := &RootedFiles{root: root, fileOps: defaultRootedFileOps()}
 	if _, err := fReal.recoverAndReadJSONL("nonexistent.jsonl", 10); err == nil {
 		t.Fatal("recoverAndReadJSONL nonexistent want error")
@@ -232,7 +232,7 @@ func TestRootedFiles_ReadJSON_WithExclusiveLock_ReadDir_Gaps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer openRoot.Close()
+	defer func() { _ = openRoot.Close() }()
 	fReal := &RootedFiles{root: openRoot}
 	if _, err := fReal.readDir("regular.txt"); err == nil {
 		t.Fatal("readDir on regular file want error")
@@ -256,7 +256,7 @@ func TestRootedFiles_OpenJSONLAppendFile_RetryExhausted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	f := &RootedFiles{root: root, fileOps: defaultRootedFileOps(), syncDirectory: syncRootDirectory}
 	_, _, err = f.openJSONLAppendFile("a/b.jsonl")
 	if err == nil || !strings.Contains(err.Error(), "directory chain remained unavailable") {
@@ -276,7 +276,7 @@ func TestRootedFiles_SyncRootDirectory_DirSyncError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 
 	if err := syncRootDirectory(root, "."); err == nil || !strings.Contains(err.Error(), "dirSync fail") {
 		t.Fatalf("syncRootDirectory want dirSync fail, got %v", err)
@@ -288,18 +288,21 @@ func TestRootedFiles_EnsureRealRootedScope_Gaps(t *testing.T) {
 
 	// 1. root.Mkdir error (line 936)
 	roDir := filepath.Join(dir, "ro_scope")
-	if err := os.Mkdir(roDir, 0o555); err != nil {
+	if err := os.Mkdir(roDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chmod(roDir, 0o755)
 	roRoot, err := os.OpenRoot(roDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer roRoot.Close()
+	defer func() { _ = roRoot.Close() }()
+	origMkdir := rootMkdirSeam
+	defer func() { rootMkdirSeam = origMkdir }()
+	rootMkdirSeam = func(*os.Root, string, os.FileMode) error { return errors.New("injected rooted mkdir failure") }
 	if _, err := ensureRealRootedScope(roRoot, "sub"); err == nil {
 		t.Fatal("ensureRealRootedScope in ro directory want error")
 	}
+	rootMkdirSeam = origMkdir
 
 	// 2. syncRootDirectorySeam error on "." (line 940)
 	origSync := syncRootDirectorySeam
@@ -314,7 +317,7 @@ func TestRootedFiles_EnsureRealRootedScope_Gaps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer normalRoot.Close()
+	defer func() { _ = normalRoot.Close() }()
 	if _, err := ensureRealRootedScope(normalRoot, "scope1"); err == nil || !strings.Contains(err.Error(), "parent sync fail") {
 		t.Fatalf("ensureRealRootedScope want parent sync fail, got %v", err)
 	}
@@ -353,7 +356,7 @@ func TestRootedFiles_JSONLReaders_DirectOps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tmpFile.Close()
+	defer func() { _ = tmpFile.Close() }()
 	if _, err := readJSONLRecords(tmpFile, "p", opsSeekFail, 10); err == nil || !strings.Contains(err.Error(), "seek fail") {
 		t.Fatalf("readJSONLRecords want seek fail, got %v", err)
 	}

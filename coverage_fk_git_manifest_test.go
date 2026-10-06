@@ -32,7 +32,7 @@ func TestForeignKeys_Gaps(t *testing.T) {
 
 	// line 44: recordExists error (e.g. parent key with control char)
 	colWithFK := &ingitdb.CollectionDef{
-		ID: "c",
+		ID:      "c",
 		Columns: map[string]*ingitdb.ColumnDef{"fk": {Type: ingitdb.ColumnTypeString, ForeignKey: "p"}},
 	}
 	parentDef := &ingitdb.CollectionDef{
@@ -242,9 +242,20 @@ func TestGitCommit_Gaps(t *testing.T) {
 
 	// Now create initial commit so hasHead is true:
 	gitCmdRun = origGitCmdRun
-	_ = os.WriteFile(filepath.Join(tempDir, "f.txt"), []byte("data"), 0o644)
-	_ = exec.Command("git", "-C", tempDir, "add", ".").Run()
-	_ = exec.Command("git", "-C", tempDir, "commit", "-m", "init").Run()
+	if err := os.WriteFile(filepath.Join(tempDir, "f.txt"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "-C", tempDir, "add", ".").CombinedOutput(); err != nil {
+		t.Fatalf("seed git add: %v: %s", err, out)
+	}
+	for _, setting := range [][2]string{{"user.name", "Test"}, {"user.email", "test@example.invalid"}} {
+		if out, err := exec.Command("git", "-C", tempDir, "config", "--local", setting[0], setting[1]).CombinedOutput(); err != nil {
+			t.Fatalf("seed git identity %s: %v: %s", setting[0], err, out)
+		}
+	}
+	if out, err := exec.Command("git", "-C", tempDir, "commit", "-m", "init").CombinedOutput(); err != nil {
+		t.Fatalf("seed git commit: %v: %s", err, out)
+	}
 
 	// line 90: read-tree error with HEAD
 	gitCmdRun = func(ctx context.Context, dir string, env []string, args ...string) ([]byte, error) {

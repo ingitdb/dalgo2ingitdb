@@ -33,15 +33,11 @@ func CollectionForKey(def *ingitdb.Definition, id string) (*ingitdb.CollectionDe
 
 	for colID, colDef := range def.Collections {
 		prefix := colID + "/"
-		if len(prefix) <= bestLen+1 {
-			continue
+		if len(prefix) > bestLen+1 && strings.HasPrefix(id, prefix) {
+			bestLen = len(prefix) - 1
+			bestColDef = colDef
+			bestKey = id[len(prefix):]
 		}
-		if !strings.HasPrefix(id, prefix) {
-			continue
-		}
-		bestLen = len(prefix) - 1
-		bestColDef = colDef
-		bestKey = id[len(prefix):]
 	}
 
 	if bestColDef == nil {

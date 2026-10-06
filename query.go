@@ -2,9 +2,12 @@ package dalgo2ingitdb
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -519,6 +522,12 @@ func readAllRecordsFromDisk(colDef *ingitdb.CollectionDef) ([]record.Record, err
 		return readAllSingleRecords(colDef)
 	case ingitdb.MapOfRecords:
 		return readAllMapOfRecords(colDef)
+	case ingitdb.ListOfRecords:
+		stored, err := readAllListStored(colDef)
+		if err != nil {
+			return nil, err
+		}
+		return bakeStoredRecords(colDef, stored)
 	default:
 		return nil, fmt.Errorf("dalgo2ingitdb: query unsupported for record type %q", colDef.RecordFile.RecordType)
 	}
@@ -576,6 +585,8 @@ func readAllStoredRecords(colDef *ingitdb.CollectionDef) ([]KeyedStored, error) 
 		return readAllSingleStored(colDef)
 	case ingitdb.MapOfRecords:
 		return readAllMapStored(colDef)
+	case ingitdb.ListOfRecords:
+		return readAllListStored(colDef)
 	default:
 		return nil, fmt.Errorf("dalgo2ingitdb: query unsupported for record type %q", colDef.RecordFile.RecordType)
 	}
@@ -628,9 +639,85 @@ func readAllMapStored(colDef *ingitdb.CollectionDef) ([]KeyedStored, error) {
 	stored := make([]KeyedStored, 0, len(allData))
 	for id, fields := range allData {
 		normalized := ingitdb.ApplyLocaleToRead(fields, colDef.Columns)
+		if err := decodeSourceTransport(colDef, normalized); err != nil {
+			return nil, fmt.Errorf("record %q: %w", id, err)
+		}
 		stored = append(stored, KeyedStored{Key: id, Stored: normalized})
 	}
 	return stored, nil
+}
+
+func readAllListStored(colDef *ingitdb.CollectionDef) ([]KeyedStored, error) {
+	path := resolveRecordPath(colDef, "")
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("stat list records %s: %w", path, err)
+	}
+	var rows []map[string]any
+	err := withSharedLock(path, func() error {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if colDef.RecordFile.Format == ingitdb.RecordFormatCSV {
+			parsed, err := ingitdb.ParseRecordContentForCollection(content, colDef)
+			if err != nil {
+				return err
+			}
+			// The collection parser owns this wrapper shape.
+			rows = parsed["$records"].([]map[string]any)
+		} else {
+			rows, err = ingitdb.ParseListOfRecordsContent(content, colDef.RecordFile.Format)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read list records %s: %w", path, err)
+	}
+	stored := make([]KeyedStored, 0, len(rows))
+	seen := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		id, ok := ingitdb.ResolveListRecordKey(row, colDef)
+		if !ok || id == "" {
+			return nil, fmt.Errorf("list record has no transport ID")
+		}
+		if seen[id] {
+			return nil, fmt.Errorf("duplicate list record ID %q", id)
+		}
+		seen[id] = true
+		delete(row, "$ID")
+		normalized := ingitdb.ApplyLocaleToRead(row, colDef.Columns)
+		if err := decodeSourceTransport(colDef, normalized); err != nil {
+			return nil, fmt.Errorf("record %q: %w", id, err)
+		}
+		stored = append(stored, KeyedStored{Key: id, Stored: normalized})
+	}
+	return stored, nil
+}
+
+func decodeSourceTransport(colDef *ingitdb.CollectionDef, fields map[string]any) error {
+	if colDef.SourceSchema == nil || colDef.SourceSchema.KeyMode == "" {
+		return nil
+	}
+	for _, field := range colDef.SourceSchema.Fields {
+		if field.Type != "bytes" {
+			continue
+		}
+		encoded, ok := fields[field.Name].(string)
+		if !ok {
+			continue
+		}
+		decoded, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return fmt.Errorf("decode source bytes field %q: %w", field.Name, err)
+		}
+		fields[field.Name] = decoded
+	}
+	return nil
 }
 
 // buildKeyExtractor returns a function that recovers the record key from
@@ -745,6 +832,16 @@ func evaluateCondition(cond dal.Condition, data map[string]any, recordKey string
 		return evaluateComparison(c, data, recordKey)
 	case dal.GroupCondition:
 		return evaluateGroupCondition(c, data, recordKey)
+	case dal.IsNullCondition:
+		value, err := resolveExpression(c.Operand(), data, recordKey)
+		if err != nil {
+			return false, err
+		}
+		isNull := dal.IsNullValue(value)
+		if c.Negated() {
+			return !isNull, nil
+		}
+		return isNull, nil
 	default:
 		return false, fmt.Errorf("dalgo2ingitdb: unsupported condition type %T", cond)
 	}
@@ -763,27 +860,18 @@ func evaluateGroupCondition(gc dal.GroupCondition, data map[string]any, recordKe
 			}
 		}
 		return true, nil
-	// The dal.Or case is commented out because no public dal API can produce an Or
-	// group condition: dal.GroupCondition has unexported fields and the only
-	// exported builder (dal.QueryBuilder) always emits the And operator; Or is
-	// reachable only via the unexported structuredQuery.Or method. An Or condition
-	// would therefore fall through to the default below. Restore this case if dalgo
-	// ever exposes Or:
-	//
-	// case dal.Or:
-	// 	for _, cond := range gc.Conditions() {
-	// 		match, err := evaluateCondition(cond, data, recordKey)
-	// 		if err != nil {
-	// 			return false, err
-	// 		}
-	// 		if match {
-	// 			return true, nil
-	// 		}
-	// 	}
-	// 	return false, nil
+	case dal.Or:
+		for _, cond := range gc.Conditions() {
+			match, err := evaluateCondition(cond, data, recordKey)
+			if err != nil {
+				return false, err
+			}
+			if match {
+				return true, nil
+			}
+		}
+		return false, nil
 	default:
-		// untestable: the public dal API only ever builds And group conditions, so
-		// no operator other than And can reach this guard.
 		return false, fmt.Errorf("dalgo2ingitdb: unsupported group operator %q", gc.Operator())
 	}
 }
@@ -796,6 +884,24 @@ func evaluateComparison(c dal.Comparison, data map[string]any, recordKey string)
 	rightVal, err := resolveExpression(c.Right, data, recordKey)
 	if err != nil {
 		return false, err
+	}
+	if c.Operator == dal.In || c.Operator == dal.NotIn {
+		items := reflect.ValueOf(rightVal)
+		if !items.IsValid() || (items.Kind() != reflect.Slice && items.Kind() != reflect.Array) {
+			return false, fmt.Errorf("dalgo2ingitdb: IN requires an array, got %T", rightVal)
+		}
+		found := false
+		for i := 0; i < items.Len(); i++ {
+			candidate := items.Index(i).Interface()
+			if candidate != nil && leftVal != nil && compareValues(leftVal, candidate) == 0 {
+				found = true
+				break
+			}
+		}
+		if c.Operator == dal.NotIn {
+			return !found && leftVal != nil, nil
+		}
+		return found, nil
 	}
 	cmp := compareValues(leftVal, rightVal)
 	switch c.Operator {
@@ -822,6 +928,8 @@ func resolveExpression(expr dal.Expression, data map[string]any, recordKey strin
 		}
 		return data[e.Name()], nil
 	case dal.Constant:
+		return e.Value, nil
+	case dal.Array:
 		return e.Value, nil
 	default:
 		return nil, fmt.Errorf("dalgo2ingitdb: unsupported expression type %T", expr)

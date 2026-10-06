@@ -4,13 +4,17 @@ package dalgo2ingitdb
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/dal-go/dalgo/dal"
+	"github.com/dal-go/dalgo/datarights"
 	"github.com/dal-go/dalgo/dbschema"
 	"gopkg.in/yaml.v3"
 
@@ -122,6 +126,11 @@ func (db *Database) DescribeCollection(_ context.Context, ref *dal.CollectionRef
 
 	fields := make([]dbschema.FieldDef, 0, len(fieldOrder))
 	for _, colName := range fieldOrder {
+		if colName == "$ID" && colDef.RecordFile != nil && colDef.RecordFile.Format == ingitdb.RecordFormatCSV && colDef.RecordFile.CSVCellEncoding == "json-v1" && colDef.SourceSchema != nil && colDef.SourceSchema.KeyMode != "" {
+			// Imported typed CSV carries the transport key in its first cell.
+			// It is not a source field or a native data column.
+			continue
+		}
 		if colName == string(pkFieldName) {
 			// Never expose the synthesized PK as a regular field.
 			continue
@@ -140,14 +149,184 @@ func (db *Database) DescribeCollection(_ context.Context, ref *dal.CollectionRef
 			Nullable: !col.Required,
 		})
 	}
+	indexes := []dbschema.IndexDef{}
+	var foreignKeys []dbschema.ForeignKeyDef
+	var sourceDefinition *dbschema.SourceDefinition
+	var sourceRights []datarights.SourceRight
+	if schema := colDef.SourceSchema; schema != nil {
+		// Generic DDL edits can add or drop fields after creation. Exported
+		// snapshots are immutable and must retain exact source-field order.
+		strictSource := schema.KeyMode != ""
+		sourceFieldsMatch := len(schema.Fields) == len(fields)
+		if sourceFieldsMatch {
+			for i, sourceField := range schema.Fields {
+				if sourceField.Name != string(fields[i].Name) {
+					sourceFieldsMatch = false
+					break
+				}
+			}
+		}
+		if strictSource && len(schema.Fields) != len(fields) {
+			return nil, fmt.Errorf("dalgo2ingitdb: describe %q: source schema fields do not match columns", name)
+		}
+		fieldPositions := make(map[string]int, len(fields))
+		for i, field := range fields {
+			fieldPositions[string(field.Name)] = i
+		}
+		if strictSource || sourceFieldsMatch {
+			for i, sourceField := range schema.Fields {
+				fieldIndex, exists := fieldPositions[sourceField.Name]
+				if !exists {
+					return nil, fmt.Errorf("dalgo2ingitdb: describe %q: source schema field %q missing from columns", name, sourceField.Name)
+				}
+				if fieldIndex != i {
+					return nil, fmt.Errorf("dalgo2ingitdb: describe %q: source schema field %q out of order", name, sourceField.Name)
+				}
+				field := &fields[fieldIndex]
+				if t, ok := sourceFieldType(sourceField.Type); ok {
+					field.Type = t
+				} else {
+					return nil, fmt.Errorf("dalgo2ingitdb: describe %q: unsupported source type %q", name, sourceField.Type)
+				}
+				field.Nullable = sourceField.Nullable
+				field.AutoIncrement = sourceField.AutoIncrement
+				field.Length = sourceField.Length
+				switch sourceField.DefaultKind {
+				case "":
+				case "current-timestamp":
+					field.Default = dbschema.DefaultCurrentTimestamp{}
+				case "literal":
+					var value any
+					decoder := json.NewDecoder(strings.NewReader(sourceField.DefaultJSON))
+					decoder.UseNumber()
+					if err := decoder.Decode(&value); err != nil {
+						return nil, fmt.Errorf("dalgo2ingitdb: describe %q default for %q: %w", name, sourceField.Name, err)
+					}
+					var trailing any
+					if err := decoder.Decode(&trailing); err != io.EOF {
+						return nil, fmt.Errorf("dalgo2ingitdb: describe %q default for %q has trailing content", name, sourceField.Name)
+					}
+					switch sourceField.DefaultType {
+					case "[]uint8":
+						var binary []byte
+						if err := json.Unmarshal([]byte(sourceField.DefaultJSON), &binary); err != nil {
+							return nil, fmt.Errorf("dalgo2ingitdb: describe %q byte default for %q: %w", name, sourceField.Name, err)
+						}
+						value = binary
+					case "int", "int64":
+						number, ok := value.(json.Number)
+						if !ok {
+							return nil, fmt.Errorf("dalgo2ingitdb: describe %q integer default for %q is not numeric", name, sourceField.Name)
+						}
+						i, err := number.Int64()
+						if err != nil {
+							return nil, err
+						}
+						if sourceField.DefaultType == "int" {
+							value = int(i)
+						} else {
+							value = i
+						}
+					case "<nil>":
+						if value != nil {
+							return nil, fmt.Errorf("dalgo2ingitdb: describe %q nil default for %q has value", name, sourceField.Name)
+						}
+					case "string":
+						if _, ok := value.(string); !ok {
+							return nil, fmt.Errorf("dalgo2ingitdb: describe %q string default for %q is not a string", name, sourceField.Name)
+						}
+					case "bool":
+						if _, ok := value.(bool); !ok {
+							return nil, fmt.Errorf("dalgo2ingitdb: describe %q bool default for %q is not a bool", name, sourceField.Name)
+						}
+					case "float64":
+						number, ok := value.(json.Number)
+						if !ok {
+							return nil, fmt.Errorf("dalgo2ingitdb: describe %q float default for %q is not numeric", name, sourceField.Name)
+						}
+						f, err := number.Float64()
+						if err != nil {
+							return nil, err
+						}
+						value = f
+					default:
+						return nil, fmt.Errorf("dalgo2ingitdb: describe %q unknown default literal type %q", name, sourceField.DefaultType)
+					}
+					field.Default = dbschema.DefaultLiteral{Value: value}
+				default:
+					return nil, fmt.Errorf("dalgo2ingitdb: describe %q unknown default kind %q", name, sourceField.DefaultKind)
+				}
+				if sourceField.Precision > 0 {
+					field.Precision = &dbschema.Precision{Total: sourceField.Precision, Scale: sourceField.Scale}
+				}
+			}
+		}
+		for _, idx := range schema.Indexes {
+			entry := dbschema.IndexDef{Name: idx.Name, Collection: name, Unique: idx.Unique}
+			for _, f := range idx.Fields {
+				entry.Fields = append(entry.Fields, dal.FieldName(f))
+			}
+			indexes = append(indexes, entry)
+		}
+		for _, fk := range schema.ForeignKeys {
+			entry := dbschema.ForeignKeyDef{Name: fk.Name, ReferencedCollection: fk.ReferencedCollection,
+				ReferencedNamespace: fk.ReferencedNamespace, Enforcement: dbschema.ForeignKeyEnforcement(fk.SourceEnforcement),
+				OnUpdate: fk.OnUpdate, OnDelete: fk.OnDelete}
+			for _, f := range fk.Fields {
+				entry.Fields = append(entry.Fields, dal.FieldName(f))
+			}
+			for _, f := range fk.ReferencedFields {
+				entry.ReferencedFields = append(entry.ReferencedFields, dal.FieldName(f))
+			}
+			foreignKeys = append(foreignKeys, entry)
+		}
+		if schema.SourceDefinitionJSON != "" {
+			sourceDefinition = new(dbschema.SourceDefinition)
+			if err := decodeSingleJSON(schema.SourceDefinitionJSON, sourceDefinition); err != nil {
+				return nil, fmt.Errorf("dalgo2ingitdb: describe %q source definition: %w", name, err)
+			}
+		}
+		if schema.SourceRightsJSON != "" {
+			if err := decodeSingleJSON(schema.SourceRightsJSON, &sourceRights); err != nil {
+				return nil, fmt.Errorf("dalgo2ingitdb: describe %q source rights: %w", name, err)
+			}
+		}
+	}
 
 	pk := primaryKeyFromColDef(colDef)
+	if colDef.SourceSchema != nil && colDef.SourceSchema.KeyMode == "export-ordinal" {
+		pk = nil
+	}
 	return &dbschema.CollectionDef{
-		Name:       name,
-		Fields:     fields,
-		PrimaryKey: pk,
-		Indexes:    []dbschema.IndexDef{},
+		Name:             name,
+		Fields:           fields,
+		PrimaryKey:       pk,
+		Indexes:          indexes,
+		ForeignKeys:      foreignKeys,
+		SourceDefinition: sourceDefinition,
+		SourceRights:     sourceRights,
 	}, nil
+}
+
+func sourceFieldType(name string) (dbschema.Type, bool) {
+	switch name {
+	case "bool":
+		return dbschema.Bool, true
+	case "int":
+		return dbschema.Int, true
+	case "float":
+		return dbschema.Float, true
+	case "string":
+		return dbschema.String, true
+	case "bytes":
+		return dbschema.Bytes, true
+	case "time":
+		return dbschema.Time, true
+	case "decimal":
+		return dbschema.Decimal, true
+	default:
+		return dbschema.Null, false
+	}
 }
 
 // primaryKeyFromColDef extracts the persisted PrimaryKey column names from
@@ -164,10 +343,14 @@ func primaryKeyFromColDef(colDef ingitdb.CollectionDef) []dal.FieldName {
 	return pk
 }
 
-// ListIndexes returns a non-nil empty slice and nil error. inGitDB has
-// no per-collection index declarations today.
-func (db *Database) ListIndexes(_ context.Context, _ *dal.CollectionRef) ([]dbschema.IndexDef, error) {
-	return []dbschema.IndexDef{}, nil
+// ListIndexes returns source index declarations retained by an export.
+// They are descriptive: inGitDB does not maintain a native secondary index.
+func (db *Database) ListIndexes(ctx context.Context, ref *dal.CollectionRef) ([]dbschema.IndexDef, error) {
+	def, err := db.DescribeCollection(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	return def.Indexes, nil
 }
 
 // ListConstraints returns a synthesized single-element slice describing
@@ -192,3 +375,15 @@ func (db *Database) ListReferrers(_ context.Context, _ *dal.CollectionRef) ([]db
 
 // Compile-time check: *Database satisfies dbschema.SchemaReader.
 var _ dbschema.SchemaReader = (*Database)(nil)
+
+func decodeSingleJSON(input string, target any) error {
+	decoder := json.NewDecoder(strings.NewReader(input))
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return fmt.Errorf("trailing JSON content")
+	}
+	return nil
+}
