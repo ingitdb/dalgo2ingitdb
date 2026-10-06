@@ -218,7 +218,7 @@ func materializeCommittedGeneration(root, revision string, blobs map[string][]by
 	if err := os.MkdirAll(parent, 0755); err != nil {
 		return err
 	}
-	tmp, err := os.MkdirTemp(parent, ".generation-")
+	tmp, err := osMkdirTemp(parent, ".generation-")
 	if err != nil {
 		return err
 	}
@@ -425,7 +425,7 @@ func materializeGeneration(root, revision string, manifest generationManifest, s
 	if err := os.MkdirAll(parent, 0755); err != nil {
 		return nil, err
 	}
-	tmp, err := os.MkdirTemp(parent, ".generation-")
+	tmp, err := osMkdirTemp(parent, ".generation-")
 	if err != nil {
 		return nil, err
 	}

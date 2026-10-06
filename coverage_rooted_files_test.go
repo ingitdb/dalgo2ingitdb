@@ -288,18 +288,20 @@ func TestRootedFiles_EnsureRealRootedScope_Gaps(t *testing.T) {
 
 	// 1. root.Mkdir error (line 936)
 	roDir := filepath.Join(dir, "ro_scope")
-	if err := os.Mkdir(roDir, 0o555); err != nil {
+	if err := os.Mkdir(roDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = os.Chmod(roDir, 0o755) }()
 	roRoot, err := os.OpenRoot(roDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = roRoot.Close() }()
+	origMkdir := rootMkdirSeam
+	rootMkdirSeam = func(*os.Root, string, os.FileMode) error { return errors.New("injected rooted mkdir failure") }
 	if _, err := ensureRealRootedScope(roRoot, "sub"); err == nil {
 		t.Fatal("ensureRealRootedScope in ro directory want error")
 	}
+	rootMkdirSeam = origMkdir
 
 	// 2. syncRootDirectorySeam error on "." (line 940)
 	origSync := syncRootDirectorySeam

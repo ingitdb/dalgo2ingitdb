@@ -931,7 +931,7 @@ func (f *RootedFiles) scopedRelativePath(relativePath string) (string, error) {
 func ensureRealRootedScope(root *os.Root, prefix string) (os.FileInfo, error) {
 	info, err := root.Lstat(prefix)
 	if errors.Is(err, fs.ErrNotExist) {
-		err = root.Mkdir(prefix, 0o755)
+		err = rootMkdirSeam(root, prefix, 0o755)
 		if err != nil && !errors.Is(err, fs.ErrExist) {
 			return nil, fmt.Errorf("dalgo2ingitdb: create rooted files scope %q: %w", prefix, err)
 		}

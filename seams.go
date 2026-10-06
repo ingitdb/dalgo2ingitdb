@@ -70,6 +70,8 @@ var (
 	userCacheDir = os.UserCacheDir
 	// osCreateTemp is used by gitCommitPaths and gitCommitPolicyCAS.
 	osCreateTemp = os.CreateTemp
+	// osMkdirTemp allows portable failure injection for generation staging.
+	osMkdirTemp = os.MkdirTemp
 	// gitCmdRun executes git commands in gitCommitPaths and gitCommitPolicyCAS.
 	gitCmdRun = func(ctx context.Context, dir string, env []string, args ...string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
@@ -140,7 +142,16 @@ var (
 	}
 	// dirSyncSeam is used by syncRootDirectory.
 	dirSyncSeam = func(f *os.File) error {
+		// Windows does not permit flushing a directory handle opened for
+		// reading; NTFS journals directory metadata. Match syncDir.
+		if runtimeGOOS == "windows" {
+			return nil
+		}
 		return f.Sync()
+	}
+	// rootMkdirSeam allows a deterministic rooted mkdir failure on every OS.
+	rootMkdirSeam = func(root *os.Root, path string, perm os.FileMode) error {
+		return root.Mkdir(path, perm)
 	}
 	// rootLstatSeam is used by ensureRealRootedScope.
 	rootLstatSeam = func(root *os.Root, path string) (os.FileInfo, error) {
