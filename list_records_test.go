@@ -106,6 +106,20 @@ func TestPointReadsPropagateMalformedExportErrors(t *testing.T) {
 	if err := mapTx.Get(ctx, newRecord()); err == nil || !strings.Contains(err.Error(), "decode source bytes") {
 		t.Fatalf("invalid map BLOB: %v", err)
 	}
+	for _, content := range []string{
+		`{"row-1":{"code":"hello"}}`,
+		`{"row-1":{"code":"hello","blob":7}}`,
+	} {
+		if err := os.WriteFile(filepath.Join(mapDef.DirPath, mapDef.RecordFile.Name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := mapTx.Get(ctx, newRecord()); err == nil || !strings.Contains(err.Error(), "decode source bytes") {
+			t.Fatalf("point Get accepted malformed source BLOB %s: %v", content, err)
+		}
+		if _, err := readAllMapStored(mapDef); err == nil || !strings.Contains(err.Error(), "decode source bytes") {
+			t.Fatalf("query accepted malformed source BLOB %s: %v", content, err)
+		}
+	}
 }
 
 func TestReadAllListStoredJSONLAndCSV(t *testing.T) {
@@ -155,6 +169,8 @@ func TestReadAllListStoredFailures(t *testing.T) {
 		{"missing-id", `{"code":"x","blob":"AP8="}` + "\n", "no transport ID"},
 		{"duplicate", `{"$ID":"x","code":"a","blob":"AP8="}` + "\n" + `{"$ID":"x","code":"b","blob":"AP8="}` + "\n", "duplicate"},
 		{"invalid-blob", `{"$ID":"x","code":"a","blob":"!"}` + "\n", "decode source bytes"},
+		{"missing-blob", `{"$ID":"x","code":"a"}` + "\n", "missing transport value"},
+		{"numeric-blob", `{"$ID":"x","code":"a","blob":7}` + "\n", "expected base64 string"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -164,6 +180,14 @@ func TestReadAllListStoredFailures(t *testing.T) {
 			}
 			if _, err := readAllListStored(def); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("error: %v", err)
+			}
+			tx := readonlyTx{def: &ingitdb.Definition{Collections: map[string]*ingitdb.CollectionDef{"items": def}}}
+			key := record.NewKeyWithID("items", "x")
+			if err := tx.Get(context.Background(), record.NewRecordWithData(key, map[string]any{})); err == nil {
+				t.Fatal("point Get accepted malformed list transport")
+			}
+			if _, err := tx.Exists(context.Background(), key); err == nil {
+				t.Fatal("Exists accepted malformed list transport")
 			}
 		})
 	}
@@ -219,7 +243,7 @@ func TestDecodeSourceTransport(t *testing.T) {
 		value   any
 		wantErr bool
 	}{
-		{"nil", nil, false}, {"bytes", []byte{0, 255}, false}, {"valid", base64.StdEncoding.EncodeToString([]byte{0, 255}), false}, {"invalid", "!", true},
+		{"nil", nil, false}, {"bytes", []byte{0, 255}, true}, {"number", 1, true}, {"valid", base64.StdEncoding.EncodeToString([]byte{0, 255}), false}, {"invalid", "!", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fields := map[string]any{"blob": tc.value}
@@ -228,6 +252,13 @@ func TestDecodeSourceTransport(t *testing.T) {
 				t.Fatalf("error: %v", err)
 			}
 		})
+	}
+	if err := decodeSourceTransport(def, map[string]any{"code": "x"}); err == nil || !strings.Contains(err.Error(), "missing transport value") {
+		t.Fatalf("missing source bytes accepted: %v", err)
+	}
+	def.SourceSchema.KeyMode = ""
+	if err := decodeSourceTransport(def, map[string]any{"code": "x"}); err != nil {
+		t.Fatalf("ordinary sparse record rejected: %v", err)
 	}
 	def.SourceSchema = nil
 	if err := decodeSourceTransport(def, map[string]any{"blob": "!"}); err != nil {
