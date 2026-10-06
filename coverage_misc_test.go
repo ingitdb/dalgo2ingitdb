@@ -839,7 +839,7 @@ func TestAccessGeneration_MaterializeCommitted_And_Symlink_Gaps(t *testing.T) {
 
 	// 3. os.MkdirTemp error (line 223)
 	_ = os.MkdirAll(parent, 0o555)
-	defer os.Chmod(parent, 0o755)
+	defer func() { _ = os.Chmod(parent, 0o755) }()
 	if err := materializeCommittedGeneration(dir, rev, blobs); err == nil {
 		t.Fatal("materializeCommittedGeneration want MkdirTemp error")
 	}
@@ -1162,7 +1162,7 @@ func TestAccessGeneration_MaterializeGeneration_Gaps(t *testing.T) {
 
 	// 4. os.MkdirTemp error (line 430)
 	_ = os.MkdirAll(parent, 0o555)
-	defer os.Chmod(parent, 0o755)
+	defer func() { _ = os.Chmod(parent, 0o755) }()
 	if _, err := materializeGeneration(dir, rev, manifest, sources); err == nil {
 		t.Fatal("materializeGeneration want MkdirTemp error")
 	}
@@ -1244,7 +1244,7 @@ func TestAccessGeneration_ReadAndVerifyGeneration_Gaps(t *testing.T) {
 
 	// 2. manifest read error via chmod 000 (line 483)
 	_ = os.WriteFile(manifestPath, []byte("data"), 0o000)
-	defer os.Chmod(manifestPath, 0o644)
+	defer func() { _ = os.Chmod(manifestPath, 0o644) }()
 	if _, err := readAndVerifyGeneration(dir, "any"); err == nil {
 		t.Fatal("readAndVerifyGeneration want read error")
 	}
@@ -1313,7 +1313,7 @@ func TestAccessGeneration_ReadAndVerifyGeneration_Gaps(t *testing.T) {
 
 	// 9. policy read error (line 512)
 	_ = os.WriteFile(policyPath, []byte("data"), 0o000)
-	defer os.Chmod(policyPath, 0o644)
+	defer func() { _ = os.Chmod(policyPath, 0o644) }()
 	if _, err := readAndVerifyGeneration(dir, p1Sha); err == nil {
 		t.Fatal("readAndVerifyGeneration want policy read error")
 	}
@@ -1458,7 +1458,7 @@ func TestAccessGeneration_AtomicWrite_SyncDir_GitCommitPolicyCAS(t *testing.T) {
 	// 2. os.CreateTemp error (line 623)
 	roDir := filepath.Join(dir, "ro_atomic")
 	_ = os.MkdirAll(roDir, 0o555)
-	defer os.Chmod(roDir, 0o755)
+	defer func() { _ = os.Chmod(roDir, 0o755) }()
 	if err := atomicWriteFile(filepath.Join(roDir, "file"), []byte("x"), 0o644); err == nil {
 		t.Fatal("atomicWriteFile want CreateTemp error")
 	}

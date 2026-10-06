@@ -275,7 +275,7 @@ func (r readonlyTx) projectedRecordset(ctx context.Context, query dal.Query, col
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	return projectRecordsFromReader(reader, columns)
 }
 
