@@ -181,6 +181,14 @@ func TestReadAllListStoredFailures(t *testing.T) {
 			if _, err := readAllListStored(def); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("error: %v", err)
 			}
+			tx := readonlyTx{def: &ingitdb.Definition{Collections: map[string]*ingitdb.CollectionDef{"items": def}}}
+			key := record.NewKeyWithID("items", "x")
+			if err := tx.Get(context.Background(), record.NewRecordWithData(key, map[string]any{})); err == nil {
+				t.Fatal("point Get accepted malformed list transport")
+			}
+			if _, err := tx.Exists(context.Background(), key); err == nil {
+				t.Fatal("Exists accepted malformed list transport")
+			}
 		})
 	}
 	def := listTestDef(t.TempDir(), ingitdb.RecordFormatJSONL, "missing.jsonl")
