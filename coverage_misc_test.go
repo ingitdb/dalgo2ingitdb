@@ -1503,12 +1503,13 @@ func TestAccessGeneration_AtomicWrite_SyncDir_GitCommitPolicyCAS(t *testing.T) {
 	if err := syncDir("anything"); err != nil {
 		t.Fatalf("syncDir windows want nil, got %v", err)
 	}
-	runtimeGOOS = origGOOS
+	runtimeGOOS = "linux"
 
 	// 2. os.Open error on non-existent (line 656)
 	if err := syncDir(filepath.Join(dir, "nonexistent")); err == nil {
 		t.Fatal("syncDir want open error")
 	}
+	runtimeGOOS = origGOOS
 
 	// gitCommitPolicyCAS:
 	// 1. osCreateTemp error (line 664)
