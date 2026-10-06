@@ -4,6 +4,7 @@ package dalgo2ingitdb
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -78,9 +79,8 @@ func (db *Database) CreateCollection(_ context.Context, c dbschema.CollectionDef
 		return fmt.Errorf("CreateCollection: mkdir %s: %w", colDir, err)
 	}
 
-	if len(c.Indexes) > 0 {
-		log.Printf("dalgo2ingitdb: CreateCollection %q ignoring %d index declaration(s) — inGitDB has no per-collection index support", c.Name, len(c.Indexes))
-	}
+	// Secondary indexes and relational foreign keys are retained in
+	// source_schema. They are intentionally not described as native enforcement.
 
 	if err := withExclusiveLock(defPath, func() error {
 		return writeCollectionDefYAML(defPath, colDef)
@@ -388,6 +388,7 @@ func (db *Database) createSubCollection(segments []string, c dbschema.Collection
 func buildIngitdbCollectionDef(c dbschema.CollectionDef) (*ingitdb.CollectionDef, error) {
 	cols := make(map[string]*ingitdb.ColumnDef, len(c.Fields))
 	order := make([]string, 0, len(c.Fields))
+	source := &ingitdb.SourceSchemaDef{}
 	for _, f := range c.Fields {
 		colType, err := dbschemaTypeToIngitdb(f.Type)
 		if err != nil {
@@ -396,6 +397,66 @@ func buildIngitdbCollectionDef(c dbschema.CollectionDef) (*ingitdb.CollectionDef
 		name := string(f.Name)
 		cols[name] = &ingitdb.ColumnDef{Type: colType, Required: !f.Nullable}
 		order = append(order, name)
+		field := ingitdb.SourceFieldDef{Name: name, Type: f.Type.String(), Nullable: f.Nullable, AutoIncrement: f.AutoIncrement, Length: f.Length}
+		switch d := f.Default.(type) {
+		case nil:
+		case dbschema.DefaultCurrentTimestamp:
+			field.DefaultKind = "current-timestamp"
+		case dbschema.DefaultLiteral:
+			switch d.Value.(type) {
+			case nil, int, int64, float64, string, bool, []byte:
+			default:
+				return nil, fmt.Errorf("field %q default literal has unsupported value type %T", f.Name, d.Value)
+			}
+			b, err := json.Marshal(d.Value)
+			if err != nil {
+				return nil, fmt.Errorf("field %q default: %w", f.Name, err)
+			}
+			field.DefaultKind, field.DefaultJSON = "literal", string(b)
+			field.DefaultType = fmt.Sprintf("%T", d.Value)
+		default:
+			return nil, fmt.Errorf("field %q default has unsupported type %T", f.Name, f.Default)
+		}
+		if f.Precision != nil {
+			field.Precision, field.Scale = f.Precision.Total, f.Precision.Scale
+		}
+		if f.Type == dbschema.Decimal {
+			field.Encoding = "decimal-string"
+		}
+		if f.Type == dbschema.Bytes {
+			field.Encoding = "base64"
+		}
+		source.Fields = append(source.Fields, field)
+	}
+	for _, idx := range c.Indexes {
+		fields := make([]string, len(idx.Fields))
+		for i, f := range idx.Fields {
+			fields[i] = string(f)
+		}
+		source.Indexes = append(source.Indexes, ingitdb.SourceIndexDef{Name: idx.Name, Fields: fields, Unique: idx.Unique})
+	}
+	for _, fk := range c.ForeignKeys {
+		fields := make([]string, len(fk.Fields))
+		for i, f := range fk.Fields {
+			fields[i] = string(f)
+		}
+		refFields := make([]string, len(fk.ReferencedFields))
+		for i, f := range fk.ReferencedFields {
+			refFields[i] = string(f)
+		}
+		source.ForeignKeys = append(source.ForeignKeys, ingitdb.SourceForeignKeyDef{
+			Name: fk.Name, Fields: fields, ReferencedCollection: fk.ReferencedCollection,
+			ReferencedNamespace: fk.ReferencedNamespace, ReferencedFields: refFields,
+			SourceEnforcement: string(fk.Enforcement), OnUpdate: fk.OnUpdate, OnDelete: fk.OnDelete,
+		})
+	}
+	if c.SourceDefinition != nil {
+		b, _ := json.Marshal(c.SourceDefinition) // plain source metadata is JSON-safe
+		source.SourceDefinitionJSON = string(b)
+	}
+	if len(c.SourceRights) > 0 {
+		b, _ := json.Marshal(c.SourceRights) // typed rights metadata is JSON-safe
+		source.SourceRightsJSON = string(b)
 	}
 	var pk []string
 	if len(c.PrimaryKey) > 0 {
@@ -410,7 +471,24 @@ func buildIngitdbCollectionDef(c dbschema.CollectionDef) (*ingitdb.CollectionDef
 		Columns:      cols,
 		ColumnsOrder: order,
 		PrimaryKey:   pk,
+		SourceSchema: source,
 	}, nil
+}
+
+// ExportCollectionDefinition maps a portable source schema to a native
+// definition without writing any files. Exporters can set a bounded record
+// format and publish the resulting project only after every table succeeds.
+func ExportCollectionDefinition(c dbschema.CollectionDef) (*ingitdb.CollectionDef, error) {
+	def, err := buildIngitdbCollectionDef(c)
+	if err != nil {
+		return nil, err
+	}
+	if len(c.PrimaryKey) == 0 {
+		def.SourceSchema.KeyMode = "export-ordinal"
+	} else {
+		def.SourceSchema.KeyMode = "source-primary-key"
+	}
+	return def, nil
 }
 
 func defaultRecordFile() *ingitdb.RecordFileDef {

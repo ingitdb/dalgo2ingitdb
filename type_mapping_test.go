@@ -59,12 +59,10 @@ func TestDBSchemaTypeToIngitdb(t *testing.T) {
 		{dbschema.String, ingitdb.ColumnTypeString, false},
 		{dbschema.Time, ingitdb.ColumnTypeDateTime, false},
 		{dbschema.Null, "", true},
-		// Decimal and Bytes now map lossily to existing column types so
-		// cross-engine copies (e.g. SQLite NUMERIC(p,s) → inGitDB) don't
-		// fail at schema-creation time. See doc comment on
-		// dbschemaTypeToIngitdb for the precision-loss caveat.
+		// Decimal and Bytes use lossless string carriers; source_schema
+		// retains their logical DALgo types.
 		{dbschema.Bytes, ingitdb.ColumnTypeString, false},
-		{dbschema.Decimal, ingitdb.ColumnTypeFloat, false},
+		{dbschema.Decimal, ingitdb.ColumnTypeString, false},
 	}
 	for _, tc := range cases {
 		got, err := dbschemaTypeToIngitdb(tc.in)

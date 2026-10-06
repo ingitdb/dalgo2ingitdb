@@ -270,12 +270,7 @@ func TestApplyWhere_EvaluateConditionError(t *testing.T) {
 // evaluateGroupCondition through a real query whose multi-condition Where
 // path always builds a GroupCondition with the And operator.
 //
-// The Or and default branches of evaluateGroupCondition are unreachable via
-// the public dal API: dal.GroupCondition's fields are unexported, the only
-// exported builder (QueryBuilder) always emits the And operator, and the
-// Or() method lives on the unexported structuredQuery type. Covering those
-// branches would require constructing a dal.GroupCondition with reflect+unsafe;
-// we deliberately don't, so they remain documented dead-via-public-API code.
+// OR is covered separately through the public dal.NewGroupCondition constructor.
 func TestEvaluateGroupCondition_And_ViaQuery(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

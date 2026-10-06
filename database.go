@@ -477,10 +477,19 @@ func (db *Database) ExecuteQueryToRecordsReader(ctx context.Context, query dal.Q
 	return reader, err
 }
 
-// ExecuteQueryToRecordsetReader is not implemented yet; callers should
-// use ExecuteQueryToRecordsReader instead.
-func (db *Database) ExecuteQueryToRecordsetReader(_ context.Context, _ dal.Query, _ ...recordset.Option) (dal.RecordsetReader, error) {
-	return nil, dal.ErrNotSupported
+// ExecuteQueryToRecordsetReader reads under the same project lock as the
+// records path, then returns an independently owned recordset reader.
+func (db *Database) ExecuteQueryToRecordsetReader(ctx context.Context, query dal.Query, options ...recordset.Option) (dal.RecordsetReader, error) {
+	var reader dal.RecordsetReader
+	err := db.withTransactionReadLock(ctx, func() error {
+		def, err := db.loadDefinition()
+		if err != nil {
+			return err
+		}
+		reader, err = (readonlyTx{db: db, def: def}).ExecuteQueryToRecordsetReader(ctx, query, options...)
+		return err
+	})
+	return reader, err
 }
 
 // Compile-time interface checks. SchemaReader / SchemaModifier assertions
