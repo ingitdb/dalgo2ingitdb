@@ -707,9 +707,16 @@ func decodeSourceTransport(colDef *ingitdb.CollectionDef, fields map[string]any)
 		if field.Type != "bytes" {
 			continue
 		}
-		encoded, ok := fields[field.Name].(string)
-		if !ok {
+		value, exists := fields[field.Name]
+		if !exists {
+			return fmt.Errorf("decode source bytes field %q: missing transport value", field.Name)
+		}
+		if value == nil {
 			continue
+		}
+		encoded, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("decode source bytes field %q: expected base64 string or null, got %T", field.Name, value)
 		}
 		decoded, err := base64.StdEncoding.DecodeString(encoded)
 		if err != nil {
