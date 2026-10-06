@@ -840,6 +840,7 @@ func TestAccessGeneration_MaterializeCommitted_And_Symlink_Gaps(t *testing.T) {
 	// 3. os.MkdirTemp error (line 223)
 	_ = os.MkdirAll(parent, 0o755)
 	origMkdirTemp := osMkdirTemp
+	defer func() { osMkdirTemp = origMkdirTemp }()
 	osMkdirTemp = func(string, string) (string, error) { return "", errors.New("injected MkdirTemp failure") }
 	if err := materializeCommittedGeneration(dir, rev, blobs); err == nil {
 		t.Fatal("materializeCommittedGeneration want MkdirTemp error")
@@ -1164,6 +1165,7 @@ func TestAccessGeneration_MaterializeGeneration_Gaps(t *testing.T) {
 	// 4. os.MkdirTemp error (line 430)
 	_ = os.MkdirAll(parent, 0o755)
 	origMkdirTemp := osMkdirTemp
+	defer func() { osMkdirTemp = origMkdirTemp }()
 	osMkdirTemp = func(string, string) (string, error) { return "", errors.New("injected MkdirTemp failure") }
 	if _, err := materializeGeneration(dir, rev, manifest, sources); err == nil {
 		t.Fatal("materializeGeneration want MkdirTemp error")
@@ -1461,6 +1463,7 @@ func TestAccessGeneration_AtomicWrite_SyncDir_GitCommitPolicyCAS(t *testing.T) {
 	roDir := filepath.Join(dir, "ro_atomic")
 	_ = os.MkdirAll(roDir, 0o755)
 	origCreateTemp := osCreateTemp
+	defer func() { osCreateTemp = origCreateTemp }()
 	osCreateTemp = func(string, string) (*os.File, error) { return nil, errors.New("injected CreateTemp failure") }
 	if err := atomicWriteFile(filepath.Join(roDir, "file"), []byte("x"), 0o644); err == nil {
 		t.Fatal("atomicWriteFile want CreateTemp error")
@@ -1468,7 +1471,6 @@ func TestAccessGeneration_AtomicWrite_SyncDir_GitCommitPolicyCAS(t *testing.T) {
 	osCreateTemp = origCreateTemp
 
 	// 2b. atomicWriteFile write/sync error (line 638)
-	defer func() { osCreateTemp = origCreateTemp }()
 	osCreateTemp = func(d, pattern string) (*os.File, error) {
 		f, err := os.CreateTemp(d, pattern)
 		if err != nil {

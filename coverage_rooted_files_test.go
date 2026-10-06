@@ -297,6 +297,7 @@ func TestRootedFiles_EnsureRealRootedScope_Gaps(t *testing.T) {
 	}
 	defer func() { _ = roRoot.Close() }()
 	origMkdir := rootMkdirSeam
+	defer func() { rootMkdirSeam = origMkdir }()
 	rootMkdirSeam = func(*os.Root, string, os.FileMode) error { return errors.New("injected rooted mkdir failure") }
 	if _, err := ensureRealRootedScope(roRoot, "sub"); err == nil {
 		t.Fatal("ensureRealRootedScope in ro directory want error")
