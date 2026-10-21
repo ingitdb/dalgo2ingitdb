@@ -3,6 +3,7 @@ package dalgo2ingitdb
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -263,5 +264,32 @@ func TestDecodeSourceTransport(t *testing.T) {
 	def.SourceSchema = nil
 	if err := decodeSourceTransport(def, map[string]any{"blob": "!"}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The file can disappear between the successful Stat and opening it under the
+// read lock. Inject that race through the existing lock factory on every OS.
+func TestReadAllListStored_FileDisappearsBeforeRead(t *testing.T) {
+	def := listTestDef(t.TempDir(), ingitdb.RecordFormatJSONL, "records.jsonl")
+	path := filepath.Join(def.DirPath, def.RecordFile.Name)
+	if err := os.WriteFile(path, []byte("{}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	original := newFileLocker
+	defer func() { newFileLocker = original }()
+	removed := false
+	newFileLocker = func(lockedPath string) fileLocker {
+		if lockedPath != path {
+			t.Fatalf("locked %q, want %q", lockedPath, path)
+		}
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		removed = true
+		return mockFileLocker{}
+	}
+	rows, err := readAllListStored(def)
+	if !removed || !errors.Is(err, os.ErrNotExist) || !strings.Contains(err.Error(), "read list records") || rows != nil {
+		t.Fatalf("removed=%v rows=%v error=%v", removed, rows, err)
 	}
 }

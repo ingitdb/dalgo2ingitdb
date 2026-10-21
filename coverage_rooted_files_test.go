@@ -408,3 +408,19 @@ func TestRootedFiles_JSONLReaders_DirectOps(t *testing.T) {
 		t.Fatalf("probeRootedJSONLOverflow want read fail, got %v", err)
 	}
 }
+
+// Windows journals directory metadata and cannot flush a read-only directory
+// handle. Simulate the platform branch while using the real root/open path.
+func TestRootedFiles_SyncRootDirectory_Windows(t *testing.T) {
+	original := runtimeGOOS
+	runtimeGOOS = "windows"
+	defer func() { runtimeGOOS = original }()
+	root, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+	if err := syncRootDirectory(root, "."); err != nil {
+		t.Fatalf("Windows directory sync: %v", err)
+	}
+}
