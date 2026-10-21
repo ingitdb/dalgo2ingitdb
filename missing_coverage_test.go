@@ -1060,17 +1060,11 @@ func TestRewriteRecordFiles_WriteFileError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// schema_reader.go — ListCollections uncovered branches
-//
-//   - walkErr != nil at the top level (root dir itself fails)
-//   - relErr != nil: filepath.Rel fails when the match is outside projectPath
-//     (impossible on a single FS; document as unreachable)
-//   - rel == "." branch: projectPath itself contains definition.yaml
+// schema_reader.go — definition-loader error propagation
 // ---------------------------------------------------------------------------
 
-// TestListCollections_WalkError exercises the walkErr != nil branch
-// (schema_reader.go line 72-74) by making the project directory unreadable.
-func TestListCollections_WalkError(t *testing.T) {
+// An unreadable project must propagate the reader error through discovery.
+func TestListCollections_DefinitionPermissionError(t *testing.T) {
 	skipWithoutPOSIXPermissions(t)
 	t.Parallel()
 	if os.Getuid() == 0 {
@@ -1131,9 +1125,8 @@ func TestListCollections_SkipsRootDefinitionYAML(t *testing.T) {
 	}
 }
 
-// TestDescribeCollection_StatNonNotFoundError exercises the branch where Stat
-// returns a non-ErrNotExist error (schema_reader.go line 95-96).
-func TestDescribeCollection_StatNonNotFoundError(t *testing.T) {
+// A registered collection with inaccessible schema propagates a load error.
+func TestDescribeCollection_DefinitionPermissionError(t *testing.T) {
 	skipWithoutPOSIXPermissions(t)
 	t.Parallel()
 	if os.Getuid() == 0 {
@@ -1145,6 +1138,7 @@ func TestDescribeCollection_StatNonNotFoundError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+	registerSchemaRoot(t, root, "tags")
 	// Make colDir unreadable so Stat on definition.yaml inside it fails.
 	err = os.Chmod(colDir, 0o000)
 	if err != nil {
@@ -1185,6 +1179,7 @@ func TestDescribeCollection_YAMLParseError(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
+	registerSchemaRoot(t, root, "tags")
 	db, err := NewDatabase(root, newReader())
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
@@ -2084,32 +2079,13 @@ func TestReadAllSingleRecords_GlobBadPattern(t *testing.T) {
 	}
 }
 
-// TestDescribeCollection_ReadError covers the read error branch in
-// DescribeCollection (schema_reader.go) via the osReadFile seam. A real
-// definition.yaml is present so Stat and the shared lock succeed; only the read
-// fails. Intentionally NOT parallel: it mutates a package-level seam.
-func TestDescribeCollection_ReadError(t *testing.T) {
-	root := t.TempDir()
-	defDir := filepath.Join(root, "things", ingitdb.SchemaDir)
-	if err := os.MkdirAll(defDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	defPath := filepath.Join(defDir, ingitdb.CollectionDefFileName)
-	if err := os.WriteFile(defPath, []byte("record_file:\n  type: \"map[string]any\"\n"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	orig := osReadFile
-	osReadFile = func(string) ([]byte, error) { return nil, os.ErrPermission }
-	defer func() { osReadFile = orig }()
-
-	db := &Database{projectPath: root}
-	ref := dal.NewCollectionRef("things", "", nil)
+// A missing reader must fail schema APIs just as it fails transactions.
+func TestDescribeCollection_MissingReader(t *testing.T) {
+	db := &Database{projectPath: t.TempDir()}
+	ref := dal.NewRootCollectionRef("things", "")
 	_, err := db.DescribeCollection(context.Background(), &ref)
-	if err == nil {
-		t.Fatal("DescribeCollection: want error when reading definition.yaml fails")
-	}
-	if !strings.Contains(err.Error(), "read definition.yaml") {
-		t.Errorf("error = %v, want it to wrap the read failure", err)
+	if err == nil || !strings.Contains(err.Error(), "no CollectionsReader configured") {
+		t.Fatalf("error = %v", err)
 	}
 }
 
@@ -2350,12 +2326,11 @@ func TestExecuteQuery_GroupConditionInnerError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// DescribeCollection — os.ReadFile error inside lock
+// DescribeCollection — definition-reader permission errors
 // ---------------------------------------------------------------------------
 
-// TestDescribeCollection_ReadInsideLockError exercises the os.ReadFile error
-// inside the shared lock in DescribeCollection (schema_reader.go line 101-103).
-func TestDescribeCollection_ReadInsideLockError(t *testing.T) {
+// A registered unreadable definition must fail schema description.
+func TestDescribeCollection_UnreadableDefinition(t *testing.T) {
 	skipWithoutPOSIXPermissions(t)
 	t.Parallel()
 	if os.Getuid() == 0 {
@@ -2379,6 +2354,7 @@ func TestDescribeCollection_ReadInsideLockError(t *testing.T) {
 	}
 	defer func() { _ = os.Chmod(defPath, 0o644) }()
 
+	registerSchemaRoot(t, root, "tags")
 	db, err := NewDatabase(root, newReader())
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)

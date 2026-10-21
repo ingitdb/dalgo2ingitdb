@@ -9,9 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dal-go/dalgo/dal"
-	"github.com/dal-go/dalgo/dbschema"
-
 	ingitdb "github.com/ingitdb/ingitdb-go/ingitdb"
 )
 
@@ -80,26 +77,12 @@ func TestValidateCollectionName_IsAbs(t *testing.T) {
 	}
 }
 
-// TestListCollections_RelError covers the filepath.Rel error branch in
-// ListCollections (schema_reader.go line 63-65) via the filepathRel seam. In
-// production the walked path is always under projectPath, so filepath.Rel never
-// fails.
-func TestListCollections_RelError(t *testing.T) {
-	root := t.TempDir()
-	writeCollectionDef(t, root, "tags", countriesDef)
-
-	orig := filepathRel
-	filepathRel = func(string, string) (string, error) { return "", errSeam }
-	defer func() { filepathRel = orig }()
-
-	db, err := NewDatabase(root, newReader())
-	if err != nil {
-		t.Fatalf("NewDatabase: %v", err)
-	}
-	reader, _ := dal.As[dbschema.SchemaReader](db)
-	_, err = reader.ListCollections(context.Background(), nil)
-	if err == nil {
-		t.Fatal("ListCollections: want error when filepath.Rel fails")
+// Schema discovery propagates definition-load failures without filesystem walking.
+func TestListCollections_MissingReader(t *testing.T) {
+	db := &Database{projectPath: t.TempDir()}
+	_, err := db.ListCollections(context.Background(), nil)
+	if err == nil || !strings.Contains(err.Error(), "no CollectionsReader configured") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

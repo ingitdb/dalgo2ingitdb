@@ -7,16 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/dalgo/datarights"
 	"github.com/dal-go/dalgo/dbschema"
-	"gopkg.in/yaml.v3"
 
 	"github.com/dal-go/record"
 	"github.com/ingitdb/ingitdb-go/ingitdb"
@@ -27,94 +23,40 @@ import (
 // definition.yaml; each record's filesystem key is the de-facto PK.
 const pkFieldName dal.FieldName = "$key"
 
-// reservedSubDirs are directory names that MUST NOT be traversed as
-// candidate collection roots during ListCollections — they hold
-// auxiliary state (schema, records, subcollections, views) and never
-// contain a sibling .collection/definition.yaml of their own.
-var reservedSubDirs = map[string]bool{
-	ingitdb.SchemaDir:      true, // .collection
-	"$records":             true,
-	"subcollections":       true,
-	"views":                true,
-	ingitdb.SharedViewsDir: true, // $views
-}
-
-// ListCollections walks the project directory looking for directories
-// that contain a .collection/definition.yaml file. The parent argument
-// is ignored (inGitDB has no catalog hierarchy). Results are sorted
-// alphabetically by name; names use "/" as the separator for nested
-// collection paths relative to projectPath.
+// ListCollections returns the logical root IDs loaded by the same reader as
+// transactions. Physical directories not registered in the definition are not
+// collections. The parent argument remains ignored.
 func (db *Database) ListCollections(_ context.Context, _ *record.Key) ([]dal.CollectionRef, error) {
-	var refs []dal.CollectionRef
-	walkErr := filepath.WalkDir(db.projectPath, func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if !d.IsDir() {
-			return nil
-		}
-		// Skip reserved sub-directory names anywhere in the tree.
-		base := d.Name()
-		if path != db.projectPath && reservedSubDirs[base] {
-			return fs.SkipDir
-		}
-		// Check whether this directory is a collection root.
-		defPath := filepath.Join(path, ingitdb.SchemaDir, ingitdb.CollectionDefFileName)
-		info, statErr := os.Stat(defPath)
-		if statErr != nil || info.IsDir() {
-			return nil
-		}
-		rel, relErr := filepathRel(db.projectPath, path)
-		if relErr != nil {
-			return fmt.Errorf("relative path for %s: %w", path, relErr)
-		}
-		if rel == "." {
-			return nil
-		}
-		name := filepath.ToSlash(rel)
-		refs = append(refs, dal.NewRootCollectionRef(name, ""))
-		return nil
-	})
-	if walkErr != nil {
-		return nil, fmt.Errorf("walk %s: %w", db.projectPath, walkErr)
+	def, err := db.loadDefinition()
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]dal.CollectionRef, 0, len(def.Collections))
+	for id := range def.Collections {
+		refs = append(refs, dal.NewRootCollectionRef(id, ""))
 	}
 	sort.Slice(refs, func(i, j int) bool { return refs[i].Name() < refs[j].Name() })
 	return refs, nil
 }
 
-// DescribeCollection reads and parses the collection's definition.yaml
-// under a shared lock, then maps the ingitdb columns to dbschema fields
-// via type_mapping. PrimaryKey is synthesized as [pkFieldName] because
-// inGitDB uses the record's filesystem key as the de-facto PK.
+// DescribeCollection maps the reader's resolved definition, including aliases,
+// inherited columns and data_dir layouts, to DALgo schema metadata.
 func (db *Database) DescribeCollection(_ context.Context, ref *dal.CollectionRef) (*dbschema.CollectionDef, error) {
 	if ref == nil {
 		return nil, fmt.Errorf("dalgo2ingitdb: DescribeCollection: ref is nil")
 	}
-	name := ref.Name()
-	defPath := filepath.Join(db.projectPath, name, ingitdb.SchemaDir, ingitdb.CollectionDefFileName)
-
-	if _, err := os.Stat(defPath); err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("dalgo2ingitdb: collection %q not found: %w", name, err)
-		}
-		return nil, fmt.Errorf("dalgo2ingitdb: stat definition.yaml for %q: %w", name, err)
+	def, err := db.loadDefinition()
+	if err != nil {
+		return nil, err
 	}
-
-	var colDef ingitdb.CollectionDef
-	readErr := withSharedLock(defPath, func() error {
-		content, err := osReadFile(defPath)
-		if err != nil {
-			return fmt.Errorf("read definition.yaml: %w", err)
-		}
-		if err := yaml.Unmarshal(content, &colDef); err != nil {
-			return fmt.Errorf("parse definition.yaml: %w", err)
-		}
-		return nil
-	})
-	if readErr != nil {
-		return nil, fmt.Errorf("dalgo2ingitdb: describe %q: %w", name, readErr)
+	colDef, err := resolveScopedCollection(def, ref.Name(), ref.Parent())
+	if err != nil {
+		return nil, fmt.Errorf("dalgo2ingitdb: collection %q not found: %w", ref.Name(), err)
 	}
+	return describeCollectionDefinition(ref.Name(), *colDef)
+}
 
+func describeCollectionDefinition(name string, colDef ingitdb.CollectionDef) (*dbschema.CollectionDef, error) {
 	fieldOrder := colDef.ColumnsOrder
 	if len(fieldOrder) == 0 {
 		fieldOrder = make([]string, 0, len(colDef.Columns))
