@@ -73,17 +73,18 @@ func (e *brokenReaderError) Error() string { return "broken reader: intentional 
 // directory typically fails on macOS/Linux).
 // ---------------------------------------------------------------------------
 
+// Inject acquisition failure: directory locking succeeds on some platforms.
 func TestWithSharedLock_AcquireError(t *testing.T) {
-	t.Parallel()
-	// A directory cannot be flock-locked on most Unix platforms.
-	dir := t.TempDir()
-	err := withSharedLock(dir, func() error { return nil })
-	if err == nil {
-		// Some platforms may succeed; mark the test as skipped to avoid flakiness.
-		t.Skip("platform allows locking a directory: cannot exercise acquire-error branch")
+	original := newFileLocker
+	defer func() { newFileLocker = original }()
+	newFileLocker = func(string) fileLocker { return mockFileLocker{lockErr: os.ErrPermission} }
+	called := false
+	err := withSharedLock("ignored", func() error { called = true; return nil })
+	if !errors.Is(err, os.ErrPermission) || !strings.Contains(err.Error(), "acquire shared lock") {
+		t.Fatalf("shared lock error = %v", err)
 	}
-	if !strings.Contains(err.Error(), "acquire shared lock") {
-		t.Errorf("error should mention 'acquire shared lock', got: %v", err)
+	if called {
+		t.Fatal("read callback ran without acquiring its lock")
 	}
 }
 
