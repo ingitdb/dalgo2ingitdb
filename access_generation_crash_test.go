@@ -251,7 +251,9 @@ func TestMountedReloadCannotReinstallRevokedGeneration(t *testing.T) {
 	if db.ownerActivation.TryLock() {
 		db.ownerActivation.Unlock()
 		close(release)
-		<-reloadDone
+		if err := <-reloadDone; err != nil {
+			t.Fatalf("reload failed after releasing activation serialization: %v", err)
+		}
 		t.Fatal("reload released activation serialization before installing its snapshot")
 	}
 	started := make(chan struct{})
