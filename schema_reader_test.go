@@ -11,6 +11,8 @@ import (
 	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/dalgo/dbschema"
 	"github.com/dal-go/record"
+	"github.com/ingitdb/ingitdb-go/ingitdb"
+	"github.com/ingitdb/ingitdb-go/ingitdb/config"
 )
 
 // writeCollectionDef creates <root>/<name>/.collection/definition.yaml
@@ -24,6 +26,22 @@ func writeCollectionDef(t *testing.T, root, name, yamlContent string) {
 	defPath := filepath.Join(colDir, "definition.yaml")
 	if err := os.WriteFile(defPath, []byte(yamlContent), 0o644); err != nil {
 		t.Fatalf("write %s: %v", defPath, err)
+	}
+	registerSchemaRoot(t, root, name)
+}
+
+func registerSchemaRoot(t *testing.T, root, name string) {
+	t.Helper()
+	m, err := config.ReadRootCollectionsFromFile(root, ingitdb.NewReadOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m == nil {
+		m = map[string]string{}
+	}
+	m[name] = name
+	if err := config.WriteRootCollectionsToFile(root, m); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -40,12 +58,12 @@ columns:
     type: int
 `
 
-func TestListCollections_FindsCollectionDirs(t *testing.T) {
+func TestListCollections_FindsRegisteredRoots(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	writeCollectionDef(t, root, "countries", countriesDef)
 	writeCollectionDef(t, root, "tags", countriesDef)
-	writeCollectionDef(t, root, "todo/tasks", countriesDef)
+	writeCollectionDef(t, root, "tasks", countriesDef)
 	// A directory without .collection/definition.yaml — must NOT appear.
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
 		t.Fatalf("mkdir docs: %v", err)
@@ -64,7 +82,7 @@ func TestListCollections_FindsCollectionDirs(t *testing.T) {
 	for i, r := range refs {
 		names[i] = r.Name()
 	}
-	want := []string{"countries", "tags", "todo/tasks"}
+	want := []string{"countries", "tags", "tasks"}
 	if !equalStrings(names, want) {
 		t.Errorf("ListCollections names: got %v, want %v", names, want)
 	}
@@ -80,8 +98,14 @@ func TestListCollections_ParentArgumentIgnored(t *testing.T) {
 	}
 	reader, _ := dal.As[dbschema.SchemaReader](db)
 
-	withNil, _ := reader.ListCollections(context.Background(), nil)
-	withKey, _ := reader.ListCollections(context.Background(), record.NewKeyWithID("ignored", "x"))
+	withNil, err := reader.ListCollections(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withKey, err := reader.ListCollections(context.Background(), record.NewKeyWithID("ignored", "x"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(withNil) != len(withKey) {
 		t.Errorf("ListCollections should ignore parent: nil=%d, key=%d", len(withNil), len(withKey))
 	}

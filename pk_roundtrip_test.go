@@ -132,6 +132,7 @@ columns_order:
 		t.Fatalf("write definition.yaml: %v", err)
 	}
 
+	registerSchemaRoot(t, root, "legacy")
 	db, _ := NewDatabase(root, newReader())
 	reader, _ := dal.As[dbschema.SchemaReader](db)
 	ref := dal.NewRootCollectionRef("legacy", "")

@@ -48,6 +48,7 @@ func TestExportDefinitionRoundTripsRelationalSchema(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, source.Name, ".collection", "definition.yaml"), b, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	registerSchemaRoot(t, root, source.Name)
 	db, err := NewDatabase(root, newReader())
 	if err != nil {
 		t.Fatal(err)
@@ -153,6 +154,7 @@ func TestDescribeImportedTypedCSVExcludesTransportID(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(path, "definition.yaml"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	registerSchemaRoot(t, root, source.Name)
 	db, err := NewDatabase(root, newReader())
 	if err != nil {
 		t.Fatal(err)

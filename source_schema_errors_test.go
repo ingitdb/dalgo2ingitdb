@@ -1,44 +1,18 @@
 package dalgo2ingitdb
 
 import (
-	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/dalgo/dbschema"
 	"github.com/ingitdb/ingitdb-go/ingitdb"
-	"gopkg.in/yaml.v3"
 )
 
 func describeSourceCase(t *testing.T, mutate func(*ingitdb.CollectionDef)) (*dbschema.CollectionDef, error) {
 	t.Helper()
-	root := t.TempDir()
 	def := &ingitdb.CollectionDef{ID: "items", Columns: map[string]*ingitdb.ColumnDef{"x": {Type: ingitdb.ColumnTypeString}}, ColumnsOrder: []string{"x"}, SourceSchema: &ingitdb.SourceSchemaDef{KeyMode: "source-primary-key", Fields: []ingitdb.SourceFieldDef{{Name: "x", Type: "string"}}}}
 	mutate(def)
-	path := filepath.Join(root, "items", ".collection", "definition.yaml")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	data, err := yaml.Marshal(def)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	db, err := NewDatabase(root, newReader())
-	if err != nil {
-		t.Fatal(err)
-	}
-	ref := dal.NewRootCollectionRef("items", "")
-	reader, ok := dal.As[dbschema.SchemaReader](db)
-	if !ok {
-		t.Fatal("schema reader unavailable")
-	}
-	return reader.DescribeCollection(context.Background(), &ref)
+	return describeCollectionDefinition("items", *def)
 }
 
 func TestDescribeSourceSchemaRejectsCorruptMetadata(t *testing.T) {
