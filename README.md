@@ -17,7 +17,7 @@ policies:
 ```
 
 Policy paths are relative to `.ingitdb/access` and use the portable
-`dtql.org/access/v1` format. The manifest and every referenced policy are
+`tugql.org/access/v1` format. The manifest and every referenced policy are
 loaded when `NewDatabase` opens the project. That immutable policy snapshot is
 used until the database is opened again; editing files does not change an
 already-open handle.

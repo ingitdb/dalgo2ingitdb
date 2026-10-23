@@ -419,8 +419,8 @@ func TestScopedCollection_Gaps(t *testing.T) {
 	}
 }
 
-func sampleDTQLPolicy(name, db string) []byte {
-	return []byte(fmt.Sprintf(`apiVersion: dtql.org/access/v1
+func sampleTugQLPolicy(name, db string) []byte {
+	return []byte(fmt.Sprintf(`apiVersion: tugql.org/access/v1
 kind: AccessPolicy
 metadata: {name: %s}
 target: {database: %s}
@@ -651,12 +651,12 @@ func TestAccessGeneration_RecoverCommitted_Gaps(t *testing.T) {
 	}
 
 	// 7. gitBlob policy error (line 164)
-	doc, err := access.ParseDTQLPolicy(sampleDTQLPolicy("p1", "db1"))
+	doc, err := access.ParseTugQLPolicy(sampleTugQLPolicy("p1", "db1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	docYAML, _ := access.MarshalDTQLPolicyYAML(doc)
-	docJSON, _ := access.MarshalDTQLPolicyJSON(doc)
+	docYAML, _ := access.MarshalTugQLPolicyYAML(doc)
+	docJSON, _ := access.MarshalTugQLPolicyJSON(doc)
 	docDigest := sha256Text(docJSON)
 
 	goodGen := generationManifest{
@@ -681,7 +681,7 @@ func TestAccessGeneration_RecoverCommitted_Gaps(t *testing.T) {
 		t.Fatalf("recoverCommittedGenerationLocked want policy blob error, got %v", err)
 	}
 
-	// 8. ParseDTQLPolicy error (line 168)
+	// 8. ParseTugQLPolicy error (line 168)
 	gitShowBlob = func(ctx context.Context, root, path string) ([]byte, error) {
 		if path == manifestPath {
 			return []byte("generation: " + goodGenSha + "\n"), nil
@@ -689,16 +689,16 @@ func TestAccessGeneration_RecoverCommitted_Gaps(t *testing.T) {
 		if strings.HasSuffix(path, "manifest.yaml") {
 			return goodGenBytes, nil
 		}
-		return []byte("not dtql policy"), nil
+		return []byte("not tugql policy"), nil
 	}
 	if err := recoverCommittedGenerationLocked(context.Background(), dir); err == nil {
-		t.Fatal("recoverCommittedGenerationLocked want ParseDTQLPolicy error")
+		t.Fatal("recoverCommittedGenerationLocked want ParseTugQLPolicy error")
 	}
 
 	// 9. policy mismatch (line 172)
 	docBadName := doc
 	docBadName.Metadata.Name = "diff_name"
-	docBadYAML, _ := access.MarshalDTQLPolicyYAML(docBadName)
+	docBadYAML, _ := access.MarshalTugQLPolicyYAML(docBadName)
 	gitShowBlob = func(ctx context.Context, root, path string) ([]byte, error) {
 		if path == manifestPath {
 			return []byte("generation: " + goodGenSha + "\n"), nil
@@ -941,7 +941,7 @@ func TestAccessGeneration_Publish_Gaps(t *testing.T) {
 		Enabled:  true,
 		Database: "db1",
 		Policies: []OwnerPolicyDocument{
-			{YAML: sampleDTQLPolicy("p1", "db1")},
+			{YAML: sampleTugQLPolicy("p1", "db1")},
 		},
 	}
 
@@ -1037,14 +1037,14 @@ func TestAccessGeneration_BuildGeneration_Gaps(t *testing.T) {
 		t.Fatal("buildGeneration empty want error")
 	}
 
-	// 2. ParseDTQLPolicy error (line 376)
+	// 2. ParseTugQLPolicy error (line 376)
 	candBadPolicy := OwnerPolicyGeneration{
 		Enabled:  true,
 		Database: "db1",
 		Policies: []OwnerPolicyDocument{{YAML: []byte("not-yaml")}},
 	}
 	if _, _, _, err := buildGeneration(candBadPolicy); err == nil {
-		t.Fatal("buildGeneration want ParseDTQLPolicy error")
+		t.Fatal("buildGeneration want ParseTugQLPolicy error")
 	}
 
 	// 3. doc.Target.Database != candidate.Database (line 383)
@@ -1052,7 +1052,7 @@ func TestAccessGeneration_BuildGeneration_Gaps(t *testing.T) {
 		Enabled:  true,
 		Database: "db1",
 		Policies: []OwnerPolicyDocument{
-			{YAML: sampleDTQLPolicy("p1", "wrong_db")},
+			{YAML: sampleTugQLPolicy("p1", "wrong_db")},
 		},
 	}
 	if _, _, _, err := buildGeneration(candWrongDB); err == nil || !strings.Contains(err.Error(), "targets wrong database") {
@@ -1064,8 +1064,8 @@ func TestAccessGeneration_BuildGeneration_Gaps(t *testing.T) {
 		Enabled:  true,
 		Database: "db1",
 		Policies: []OwnerPolicyDocument{
-			{YAML: sampleDTQLPolicy("p1", "db1")},
-			{YAML: sampleDTQLPolicy("p1", "db1")},
+			{YAML: sampleTugQLPolicy("p1", "db1")},
+			{YAML: sampleTugQLPolicy("p1", "db1")},
 		},
 	}
 	if _, _, _, err := buildGeneration(candDup); err == nil || !strings.Contains(err.Error(), "duplicate policy id") {
@@ -1077,8 +1077,8 @@ func TestAccessGeneration_BuildGeneration_Gaps(t *testing.T) {
 		Enabled:  true,
 		Database: "db1",
 		Policies: []OwnerPolicyDocument{
-			{YAML: sampleDTQLPolicy("z_policy", "db1")},
-			{YAML: sampleDTQLPolicy("a_policy", "db1")},
+			{YAML: sampleTugQLPolicy("z_policy", "db1")},
+			{YAML: sampleTugQLPolicy("a_policy", "db1")},
 		},
 	}
 	manifest, _, _, err := buildGeneration(candMulti)
@@ -1102,27 +1102,27 @@ func TestAccessGeneration_BuildGeneration_Gaps(t *testing.T) {
 		t.Fatalf("buildGeneration want marshal manifest fail, got %v", err)
 	}
 
-	// 7. accessMarshalDTQLPolicyJSON error (line 387)
-	origJSON := accessMarshalDTQLPolicyJSON
-	defer func() { accessMarshalDTQLPolicyJSON = origJSON }()
-	accessMarshalDTQLPolicyJSON = func(doc access.DTQLDocument) ([]byte, error) {
+	// 7. accessMarshalTugQLPolicyJSON error (line 387)
+	origJSON := accessMarshalTugQLPolicyJSON
+	defer func() { accessMarshalTugQLPolicyJSON = origJSON }()
+	accessMarshalTugQLPolicyJSON = func(doc access.TugQLDocument) ([]byte, error) {
 		return nil, errors.New("marshal json fail")
 	}
 	if _, _, _, err := buildGeneration(candMulti); err == nil || !strings.Contains(err.Error(), "marshal json fail") {
 		t.Fatalf("buildGeneration want marshal json fail, got %v", err)
 	}
-	accessMarshalDTQLPolicyJSON = origJSON
+	accessMarshalTugQLPolicyJSON = origJSON
 
-	// 8. accessMarshalDTQLPolicyYAML error (line 396)
-	origYAMLSeam := accessMarshalDTQLPolicyYAML
-	defer func() { accessMarshalDTQLPolicyYAML = origYAMLSeam }()
-	accessMarshalDTQLPolicyYAML = func(doc access.DTQLDocument) ([]byte, error) {
+	// 8. accessMarshalTugQLPolicyYAML error (line 396)
+	origYAMLSeam := accessMarshalTugQLPolicyYAML
+	defer func() { accessMarshalTugQLPolicyYAML = origYAMLSeam }()
+	accessMarshalTugQLPolicyYAML = func(doc access.TugQLDocument) ([]byte, error) {
 		return nil, errors.New("marshal yaml fail")
 	}
 	if _, _, _, err := buildGeneration(candMulti); err == nil || !strings.Contains(err.Error(), "marshal yaml fail") {
 		t.Fatalf("buildGeneration want marshal yaml fail, got %v", err)
 	}
-	accessMarshalDTQLPolicyYAML = origYAMLSeam
+	accessMarshalTugQLPolicyYAML = origYAMLSeam
 }
 
 func TestAccessGeneration_MaterializeGeneration_Gaps(t *testing.T) {
@@ -1323,18 +1323,18 @@ func TestAccessGeneration_ReadAndVerifyGeneration_Gaps(t *testing.T) {
 	}
 	_ = os.Chmod(policyPath, 0o644)
 
-	// 10. policy DTQL parse error (line 516)
+	// 10. policy TugQL parse error (line 516)
 	_ = os.WriteFile(policyPath, []byte("not-policy"), 0o644)
 	if _, err := readAndVerifyGeneration(dir, p1Sha); err == nil {
-		t.Fatal("readAndVerifyGeneration want DTQL parse error")
+		t.Fatal("readAndVerifyGeneration want TugQL parse error")
 	}
 
 	// 11. policy digest mismatch (line 520)
-	doc, err := access.ParseDTQLPolicy(sampleDTQLPolicy("p1", "db1"))
+	doc, err := access.ParseTugQLPolicy(sampleTugQLPolicy("p1", "db1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	docYAML, _ := access.MarshalDTQLPolicyYAML(doc)
+	docYAML, _ := access.MarshalTugQLPolicyYAML(doc)
 	_ = os.WriteFile(policyPath, docYAML, 0o644)
 	if _, err := readAndVerifyGeneration(dir, p1Sha); err == nil || !strings.Contains(err.Error(), "digest or id mismatch") {
 		t.Fatalf("readAndVerifyGeneration want digest mismatch, got %v", err)

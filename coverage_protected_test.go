@@ -864,4 +864,3 @@ func TestProtected_AssignBatchCandidateRevisions_Gaps(t *testing.T) {
 		t.Fatalf("assignBatchCandidateRevisions unsupported: want error, got %v", err)
 	}
 }
-

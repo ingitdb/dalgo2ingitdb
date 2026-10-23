@@ -42,7 +42,7 @@ func TestNewDatabase_OwnerPolicyPersistsAndEnforcesReads(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifest := "enabled: true\ndatabase: world-prod\npolicies: [readers.yaml]\n"
-	policy := `apiVersion: dtql.org/access/v1
+	policy := `apiVersion: tugql.org/access/v1
 kind: AccessPolicy
 metadata: {name: country-readers}
 target: {database: world-prod}
@@ -245,7 +245,7 @@ func TestOwnerPolicy_ConfiguredRealmUsesTypedHumanBindings(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifest := "enabled: true\ndatabase: world\nrealm: staff.example\npolicies: [people.yaml]\n"
-	policy := `apiVersion: dtql.org/access/v1
+	policy := `apiVersion: tugql.org/access/v1
 kind: AccessPolicy
 metadata: {name: people}
 target: {database: world}
@@ -393,7 +393,7 @@ func writeOwnerPolicy(t *testing.T, root, collection string, fields ...string) {
 		t.Fatal(err)
 	}
 	manifest := "enabled: true\ndatabase: protected\npolicies: [owner.yaml]\n"
-	policy := "apiVersion: dtql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: owner}\ntarget: {database: protected}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes:\n  - path: /" + collection + "\n    rules:\n      - {id: query, effect: allow, operations: [query], fields: [" + strings.Join(fields, ", ") + "]}\n  - path: /" + collection + "/*\n    rules:\n      - {id: get, effect: allow, operations: [get], fields: [" + strings.Join(fields, ", ") + "]}\n"
+	policy := "apiVersion: tugql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: owner}\ntarget: {database: protected}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes:\n  - path: /" + collection + "\n    rules:\n      - {id: query, effect: allow, operations: [query], fields: [" + strings.Join(fields, ", ") + "]}\n  - path: /" + collection + "/*\n    rules:\n      - {id: get, effect: allow, operations: [get], fields: [" + strings.Join(fields, ", ") + "]}\n"
 	if err := os.WriteFile(filepath.Join(dir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
 	}

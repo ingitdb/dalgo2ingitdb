@@ -163,11 +163,11 @@ func recoverCommittedGenerationLocked(ctx context.Context, root string) error {
 		if err != nil {
 			return err
 		}
-		doc, err := access.ParseDTQLPolicy(data)
+		doc, err := access.ParseTugQLPolicy(data)
 		if err != nil {
 			return err
 		}
-		canonical, _ := access.MarshalDTQLPolicyJSON(doc)
+		canonical, _ := access.MarshalTugQLPolicyJSON(doc)
 		if doc.Metadata.Name != policy.ID || sha256Text(canonical) != policy.Digest {
 			return fmt.Errorf("dalgo2ingitdb: committed policy %q mismatch", policy.ID)
 		}
@@ -371,7 +371,7 @@ func buildGeneration(candidate OwnerPolicyGeneration) (generationManifest, map[s
 	manifest := generationManifest{APIVersion: generationAPIVersion, Enabled: true, Database: candidate.Database, Realm: candidate.Realm}
 	sources := map[string][]byte{}
 	for _, item := range candidate.Policies {
-		doc, err := access.ParseDTQLPolicy(item.YAML)
+		doc, err := access.ParseTugQLPolicy(item.YAML)
 		if err != nil {
 			return generationManifest{}, nil, "", err
 		}
@@ -382,7 +382,7 @@ func buildGeneration(candidate OwnerPolicyGeneration) (generationManifest, map[s
 		if doc.Target.Database != candidate.Database {
 			return generationManifest{}, nil, "", fmt.Errorf("dalgo2ingitdb: policy %q targets wrong database", id)
 		}
-		canonical, err := accessMarshalDTQLPolicyJSON(doc)
+		canonical, err := accessMarshalTugQLPolicyJSON(doc)
 		if err != nil {
 			return generationManifest{}, nil, "", err
 		}
@@ -391,7 +391,7 @@ func buildGeneration(candidate OwnerPolicyGeneration) (generationManifest, map[s
 		if _, duplicate := sources[file]; duplicate {
 			return generationManifest{}, nil, "", fmt.Errorf("dalgo2ingitdb: duplicate policy id %q", id)
 		}
-		source, err := accessMarshalDTQLPolicyYAML(doc)
+		source, err := accessMarshalTugQLPolicyYAML(doc)
 		if err != nil {
 			return generationManifest{}, nil, "", err
 		}
@@ -511,11 +511,11 @@ func readAndVerifyGeneration(base, revision string) (generationManifest, error) 
 		if err != nil {
 			return generationManifest{}, err
 		}
-		doc, err := access.ParseDTQLPolicy(source)
+		doc, err := access.ParseTugQLPolicy(source)
 		if err != nil {
 			return generationManifest{}, err
 		}
-		canonical, _ := access.MarshalDTQLPolicyJSON(doc)
+		canonical, _ := access.MarshalTugQLPolicyJSON(doc)
 		if doc.Metadata.Name != p.ID || sha256Text(canonical) != p.Digest {
 			return generationManifest{}, fmt.Errorf("policy %q digest or id mismatch", p.ID)
 		}

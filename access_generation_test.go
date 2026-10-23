@@ -22,7 +22,7 @@ func TestOwnerPolicyControllerPublishesCommittedGenerationAndRecovers(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy := []byte(`apiVersion: dtql.org/access/v1
+	policy := []byte(`apiVersion: tugql.org/access/v1
 kind: AccessPolicy
 metadata: {name: readers}
 target: {database: world}
@@ -62,7 +62,7 @@ scopes:
 	if !ok {
 		t.Fatal("generation database lost owner policy controller")
 	}
-	deny := []byte(`apiVersion: dtql.org/access/v1
+	deny := []byte(`apiVersion: tugql.org/access/v1
 kind: AccessPolicy
 metadata: {name: readers}
 target: {database: world}
@@ -104,7 +104,7 @@ func TestOwnerPolicyControllerRejectsUnsafeIDAndDirtyPolicyTree(t *testing.T) {
 	root := t.TempDir()
 	initGitRepository(t, root)
 	controller, _ := dalgo2ingitdb.NewOwnerPolicyController(root)
-	unsafe := []byte(`apiVersion: dtql.org/access/v1
+	unsafe := []byte(`apiVersion: tugql.org/access/v1
 kind: AccessPolicy
 metadata: {name: ../escape}
 target: {database: world}
@@ -132,7 +132,7 @@ func TestOwnerPolicyReloadRejectsDirtyCommittedGenerationWithoutRepair(t *testin
 	root := t.TempDir()
 	initGitRepository(t, root)
 	controller, _ := dalgo2ingitdb.NewOwnerPolicyController(root)
-	policy := []byte("apiVersion: dtql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: p}\ntarget: {database: world}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes: [{path: /x/*, rules: [{id: r, effect: allow, operations: [get]}]}]\n")
+	policy := []byte("apiVersion: tugql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: p}\ntarget: {database: world}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes: [{path: /x/*, rules: [{id: r, effect: allow, operations: [get]}]}]\n")
 	published, err := controller.Publish(context.Background(), dalgo2ingitdb.OwnerPolicyGeneration{Enabled: true, Database: "world", Policies: []dalgo2ingitdb.OwnerPolicyDocument{{YAML: policy}}}, "", "publish")
 	if err != nil {
 		t.Fatal(err)

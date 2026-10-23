@@ -13,8 +13,8 @@ import (
 )
 
 func TestOwnerPolicyPublicationCrashOrdering(t *testing.T) {
-	policy := OwnerPolicyDocument{YAML: []byte("apiVersion: dtql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: readers}\ntarget: {database: world}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes: [{path: /x/*, rules: [{id: read, effect: allow, operations: [get]}]}]\n")}
-	replacement := OwnerPolicyDocument{YAML: []byte("apiVersion: dtql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: readers}\ntarget: {database: world}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes: [{path: /x/*, rules: [{id: deny, effect: deny, operations: [get]}]}]\n")}
+	policy := OwnerPolicyDocument{YAML: []byte("apiVersion: tugql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: readers}\ntarget: {database: world}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes: [{path: /x/*, rules: [{id: read, effect: allow, operations: [get]}]}]\n")}
+	replacement := OwnerPolicyDocument{YAML: []byte("apiVersion: tugql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: readers}\ntarget: {database: world}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes: [{path: /x/*, rules: [{id: deny, effect: deny, operations: [get]}]}]\n")}
 	preCAS := map[string]bool{"generation_files_synced": true, "generation_renamed": true, "generation_parent_synced": true, "generation_materialized": true, "commit_created": true}
 	for _, phase := range []string{"generation_files_synced", "generation_renamed", "generation_parent_synced", "generation_materialized", "commit_created", "head_committed", "working_pointer_activated"} {
 		t.Run(phase, func(t *testing.T) {
@@ -76,7 +76,7 @@ func TestOwnerPolicyPublicationProcessCrashOrdering(t *testing.T) {
 			runGitForGenerationTest(t, root, "config", "user.email", "test@example.invalid")
 			runGitForGenerationTest(t, root, "commit", "--allow-empty", "-m", "initial")
 			controller, _ := NewOwnerPolicyController(root)
-			policy := OwnerPolicyDocument{YAML: []byte("apiVersion: dtql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: readers}\ntarget: {database: world}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes: [{path: /x/*, rules: [{id: read, effect: allow, operations: [get]}]}]\n")}
+			policy := OwnerPolicyDocument{YAML: []byte("apiVersion: tugql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: readers}\ntarget: {database: world}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes: [{path: /x/*, rules: [{id: read, effect: allow, operations: [get]}]}]\n")}
 			initial, err := controller.Publish(context.Background(), OwnerPolicyGeneration{Enabled: true, Database: "world", Policies: []OwnerPolicyDocument{policy}}, "", "initial")
 			if err != nil {
 				t.Fatal(err)
@@ -113,7 +113,7 @@ func TestOwnerPolicyPublicationCrashChild(t *testing.T) {
 		}
 		return nil
 	}
-	replacement := OwnerPolicyDocument{YAML: []byte("apiVersion: dtql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: readers}\ntarget: {database: world}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes: [{path: /x/*, rules: [{id: deny, effect: deny, operations: [get]}]}]\n")}
+	replacement := OwnerPolicyDocument{YAML: []byte("apiVersion: tugql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: readers}\ntarget: {database: world}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes: [{path: /x/*, rules: [{id: deny, effect: deny, operations: [get]}]}]\n")}
 	candidate := OwnerPolicyGeneration{Enabled: true, Database: "world", Policies: []OwnerPolicyDocument{replacement}}
 	if phase == "snapshot_activated" {
 		db, err := NewDatabase(root, nil)
@@ -139,7 +139,7 @@ func runGitForGenerationTest(t *testing.T, root string, args ...string) {
 }
 
 func TestBuildGenerationBounds(t *testing.T) {
-	policy := OwnerPolicyDocument{YAML: []byte("apiVersion: dtql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: p}\ntarget: {database: world}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes: [{path: /x/*, rules: [{id: r, effect: allow, operations: [get]}]}]\n")}
+	policy := OwnerPolicyDocument{YAML: []byte("apiVersion: tugql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: p}\ntarget: {database: world}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes: [{path: /x/*, rules: [{id: r, effect: allow, operations: [get]}]}]\n")}
 	if _, _, _, err := buildGeneration(OwnerPolicyGeneration{Enabled: true, Database: "world", Realm: " bad ", Policies: []OwnerPolicyDocument{policy}}); err == nil {
 		t.Fatal("invalid realm accepted")
 	}
@@ -159,7 +159,7 @@ func TestUnreferencedCompleteGenerationDoesNotBlockRetry(t *testing.T) {
 	runGitForGenerationTest(t, root, "config", "user.email", "test@example.invalid")
 	runGitForGenerationTest(t, root, "commit", "--allow-empty", "-m", "initial")
 	controller, _ := NewOwnerPolicyController(root)
-	policy := OwnerPolicyDocument{YAML: []byte("apiVersion: dtql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: p}\ntarget: {database: world}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes: [{path: /x/*, rules: [{id: r, effect: allow, operations: [get]}]}]\n")}
+	policy := OwnerPolicyDocument{YAML: []byte("apiVersion: tugql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: p}\ntarget: {database: world}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes: [{path: /x/*, rules: [{id: r, effect: allow, operations: [get]}]}]\n")}
 	ownerPolicyPublicationHook = func(phase string) error {
 		if phase == "generation_renamed" {
 			return errors.New("stop")
@@ -184,7 +184,7 @@ func TestFacadePostCommitErrorInstallsAuthoritativeSnapshot(t *testing.T) {
 	runGitForGenerationTest(t, root, "config", "user.email", "test@example.invalid")
 	runGitForGenerationTest(t, root, "commit", "--allow-empty", "-m", "initial")
 	controller, _ := NewOwnerPolicyController(root)
-	allow := OwnerPolicyDocument{YAML: []byte("apiVersion: dtql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: p}\ntarget: {database: world}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes: [{path: /x/one, rules: [{id: r, effect: allow, operations: [get]}]}]\n")}
+	allow := OwnerPolicyDocument{YAML: []byte("apiVersion: tugql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: p}\ntarget: {database: world}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes: [{path: /x/one, rules: [{id: r, effect: allow, operations: [get]}]}]\n")}
 	initial, err := controller.Publish(context.Background(), OwnerPolicyGeneration{Enabled: true, Database: "world", Policies: []OwnerPolicyDocument{allow}}, "", "initial")
 	if err != nil {
 		t.Fatal(err)
@@ -196,7 +196,7 @@ func TestFacadePostCommitErrorInstallsAuthoritativeSnapshot(t *testing.T) {
 	manager := db.(interface {
 		PublishOwnerPolicyGeneration(context.Context, OwnerPolicyGeneration, string, string) (OwnerPolicyPublication, error)
 	})
-	deny := OwnerPolicyDocument{YAML: []byte("apiVersion: dtql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: p}\ntarget: {database: world}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes: [{path: /x/one, rules: [{id: d, effect: deny, operations: [get]}]}]\n")}
+	deny := OwnerPolicyDocument{YAML: []byte("apiVersion: tugql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: p}\ntarget: {database: world}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes: [{path: /x/one, rules: [{id: d, effect: deny, operations: [get]}]}]\n")}
 	ownerPolicyPublicationHook = func(phase string) error {
 		if phase == "head_committed" {
 			return errors.New("response lost")
@@ -221,7 +221,7 @@ func TestMountedReloadCannotReinstallRevokedGeneration(t *testing.T) {
 	runGitForGenerationTest(t, root, "commit", "--allow-empty", "-m", "initial")
 	controller, _ := NewOwnerPolicyController(root)
 	document := func(effect string) OwnerPolicyDocument {
-		return OwnerPolicyDocument{YAML: []byte("apiVersion: dtql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: p}\ntarget: {database: world}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes: [{path: /x/one, rules: [{id: r, effect: " + effect + ", operations: [get]}]}]\n")}
+		return OwnerPolicyDocument{YAML: []byte("apiVersion: tugql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: p}\ntarget: {database: world}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes: [{path: /x/one, rules: [{id: r, effect: " + effect + ", operations: [get]}]}]\n")}
 	}
 	initial, err := controller.Publish(context.Background(), OwnerPolicyGeneration{Enabled: true, Database: "world", Policies: []OwnerPolicyDocument{document("allow")}}, "", "initial")
 	if err != nil {

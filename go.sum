@@ -3,10 +3,10 @@ github.com/RoaringBitmap/roaring/v2 v2.29.0/go.mod h1:BZufmFbox589n3j5eOmyTaLSGX
 github.com/bits-and-blooms/bitset v1.24.6 h1:qcrftZUVBIwfs+m+nhoCBAPT+ZPZZjti8SbHbDQQkZ4=
 github.com/bits-and-blooms/bitset v1.24.6/go.mod h1:7hO7Gc7Pp1vODcmWvKMRA9BNmbv6a/7QIWpPxHddWR8=
 github.com/creack/pty v1.1.9/go.mod h1:oKZEueFk5CKHvIhNR5MUki03XCEU+Q6VDXinZuGJ33E=
-github.com/dal-go/dalgo v0.93.0 h1:jcigrWhdgkOJjf9LFLvDAqrsVzxHtpVEZH7oLhV6b7I=
-github.com/dal-go/dalgo v0.93.0/go.mod h1:Pvqn4YCOqLxKeim0M/0wzGDwtuaZKi18TRdaZ3PCS3c=
-github.com/dal-go/record v0.1.4 h1:21IJNlUASNw9TytcB5V5a2jHQKa1pycr//dGvj8zNH8=
-github.com/dal-go/record v0.1.4/go.mod h1:PuoOCH74/Vf+pIVWSdrMg7OdUmlSlPgj68yJ+gM42To=
+github.com/dal-go/dalgo v0.95.2 h1:1Q8+galIb4z3mcgrkDAmPbKCnwxNMhzlZvJuxylrvCA=
+github.com/dal-go/dalgo v0.95.2/go.mod h1:D0eryUAzC1TZhFTGT3BJS+AOjaiHMrbgrfl6Hsxt8ak=
+github.com/dal-go/record v0.1.5 h1:lkPxiJA7S2oE5tA0WUayezd+lmaiEekrEcGz/HRhzLg=
+github.com/dal-go/record v0.1.5/go.mod h1:PuoOCH74/Vf+pIVWSdrMg7OdUmlSlPgj68yJ+gM42To=
 github.com/gofrs/flock v0.13.0 h1:95JolYOvGMqeH31+FC7D2+uULf6mG61mEZ/A8dRYMzw=
 github.com/gofrs/flock v0.13.0/go.mod h1:jxeyy9R1auM5S6JYDBhDt+E2TCo7DkratH4Pgi8P+Z0=
 github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
@@ -29,8 +29,8 @@ github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWD
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
 github.com/strongo/random v0.0.3 h1:R4XNjyBvlqL5Mln0meQO9d/Wy1SSN8CpCJ8sKSkIifw=
 github.com/strongo/random v0.0.3/go.mod h1:V/TldevwaA3XYhJApc5kQUmpAVUZhoEcsdl5m1+emx4=
-github.com/strongo/validation v0.0.15 h1:k5rM/DmRlEXYAlH/n9vlUYku1k7qQWVdg2PRAXSg9Ww=
-github.com/strongo/validation v0.0.15/go.mod h1:EY+//fgQhn6rr0rOvWRJuUCTSk5BIETZL2bL9CIDhbs=
+github.com/strongo/validation v0.0.16 h1:SHWiXNdiEzT25nZkqxdKPgTZrmRCgAilYb8oPjgeNOE=
+github.com/strongo/validation v0.0.16/go.mod h1:phG1QvHTDI46BtsJodTvTOWIHfw1cZlBLRcgvFClejs=
 go.starlark.net v0.0.0-20260708150628-5395d018f003 h1:cAxcqHgW8fnmT0cEBU3TzvVYHIFt8IIGDMWUF6rImk4=
 go.starlark.net v0.0.0-20260708150628-5395d018f003/go.mod h1:Iue6g6iirlfLoVi/DYCi5/x0h/bAOuWF3dULTKpt2Vo=
 go.uber.org/mock v0.6.0 h1:hyF9dfmbgIX5EfOdasqLsWD6xqpNZlXblLB/Dbnwv3Y=

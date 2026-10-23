@@ -5,8 +5,8 @@ go 1.26.0
 toolchain go1.27.0
 
 require (
-	github.com/dal-go/dalgo v0.93.0
-	github.com/dal-go/record v0.1.4
+	github.com/dal-go/dalgo v0.95.2
+	github.com/dal-go/record v0.1.5
 	github.com/gofrs/flock v0.13.0
 	github.com/ingitdb/ingitdb-go/ingitdb v0.9.0
 	github.com/ingr-io/ingr-go v0.0.2
@@ -22,7 +22,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
 	github.com/strongo/random v0.0.3 // indirect
-	github.com/strongo/validation v0.0.15 // indirect
+	github.com/strongo/validation v0.0.16 // indirect
 	go.starlark.net v0.0.0-20260708150628-5395d018f003 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 )
