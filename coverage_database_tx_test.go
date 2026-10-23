@@ -19,8 +19,8 @@ import (
 
 type customTransform struct{ name string }
 
-func (c customTransform) Name() string  { return c.name }
-func (c customTransform) Value() any    { return 1 }
+func (c customTransform) Name() string   { return c.name }
+func (c customTransform) Value() any     { return 1 }
 func (c customTransform) String() string { return c.name }
 
 type unmappableType struct {
@@ -35,9 +35,9 @@ func (mockColReader) ReadDefinition(dbPath string, opts ...ingitdb.ReadOption) (
 
 type emptyCustomUpdate struct{}
 
-func (emptyCustomUpdate) FieldName() string        { return "" }
+func (emptyCustomUpdate) FieldName() string           { return "" }
 func (emptyCustomUpdate) FieldPath() update.FieldPath { return nil }
-func (emptyCustomUpdate) Value() any               { return 1 }
+func (emptyCustomUpdate) Value() any                  { return 1 }
 
 func TestTxReadwrite_NumericAndUpdates(t *testing.T) {
 	// toNumericFloat64 tests
@@ -365,7 +365,7 @@ func TestDatabase_SecuredAndLifecycleGaps(t *testing.T) {
 	manifestPath := filepath.Join(accessDir, accessManifestName)
 	policyDir := filepath.Join(accessDir, "policies")
 	_ = os.MkdirAll(policyDir, 0o755)
-	policyContent := "apiVersion: dtql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: p}\ntarget: {database: test}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes: [{path: /col/*, rules: [{id: r, effect: allow, operations: [get]}]}]\n"
+	policyContent := "apiVersion: tugql.org/access/v1\nkind: AccessPolicy\nmetadata: {name: p}\ntarget: {database: test}\ncomposition: dalgo-hierarchical-v1\ndefault: deny\nscopes: [{path: /col/*, rules: [{id: r, effect: allow, operations: [get]}]}]\n"
 	_ = os.WriteFile(filepath.Join(policyDir, "p.yaml"), []byte(policyContent), 0o644)
 	_ = os.WriteFile(manifestPath, []byte("enabled: true\ndatabase: test\npolicies: [policies/p.yaml]\n"), 0o644)
 

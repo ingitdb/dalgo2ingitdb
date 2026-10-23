@@ -1155,7 +1155,7 @@ func TestRootedFilesDALgoAuthorizationBoundary(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(accessDir, "manifest.yaml"), []byte("enabled: true\ndatabase: rooted-files-test\npolicies: [deny.yaml]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	policy := `apiVersion: dtql.org/access/v1
+	policy := `apiVersion: tugql.org/access/v1
 kind: AccessPolicy
 metadata: {name: deny-all}
 target: {database: rooted-files-test}

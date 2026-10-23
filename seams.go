@@ -168,10 +168,10 @@ var (
 	accessLoadPolicyFiles = access.LoadPolicyFiles
 	// syncDirSeam is used by access_generation directory sync operations.
 	syncDirSeam = syncDir
-	// accessMarshalDTQLPolicyJSON is used by buildGeneration.
-	accessMarshalDTQLPolicyJSON = access.MarshalDTQLPolicyJSON
-	// accessMarshalDTQLPolicyYAML is used by buildGeneration.
-	accessMarshalDTQLPolicyYAML = access.MarshalDTQLPolicyYAML
+	// accessMarshalTugQLPolicyJSON is used by buildGeneration.
+	accessMarshalTugQLPolicyJSON = access.MarshalTugQLPolicyJSON
+	// accessMarshalTugQLPolicyYAML is used by buildGeneration.
+	accessMarshalTugQLPolicyYAML = access.MarshalTugQLPolicyYAML
 	// filepathWalkDir is used by requireCleanAccessTree.
 	filepathWalkDir = filepath.WalkDir
 )

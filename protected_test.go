@@ -40,7 +40,7 @@ func setupProtectedCountries(t *testing.T, upper ...access.MandatoryParticipant)
 		t.Fatal(err)
 	}
 	manifest := "enabled: true\ndatabase: protected\npolicies: [owner.yaml]\n"
-	policy := `apiVersion: dtql.org/access/v1
+	policy := `apiVersion: tugql.org/access/v1
 kind: AccessPolicy
 metadata: {name: owner}
 target: {database: protected}
@@ -302,7 +302,7 @@ func TestProtectedNestedOwnershipCannotRewritePreImage(t *testing.T) {
 	if err := os.WriteFile(path, before, 0600); err != nil {
 		t.Fatal(err)
 	}
-	policy := `apiVersion: dtql.org/access/v1
+	policy := `apiVersion: tugql.org/access/v1
 kind: AccessPolicy
 metadata: {name: owner}
 target: {database: protected}
