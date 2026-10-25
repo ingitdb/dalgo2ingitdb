@@ -2,7 +2,7 @@ module github.com/ingitdb/dalgo2ingitdb
 
 go 1.26.0
 
-toolchain go1.27.0
+toolchain go1.27.3
 
 require (
 	github.com/dal-go/dalgo v0.95.2
