@@ -8,7 +8,7 @@ require (
 	github.com/dal-go/dalgo v0.95.4
 	github.com/dal-go/record v0.1.5
 	github.com/gofrs/flock v0.13.1
-	github.com/ingitdb/ingitdb-go/ingitdb v0.10.2
+	github.com/ingitdb/ingitdb-go/ingitdb v0.10.6
 	github.com/ingr-io/ingr-go v0.0.2
 	golang.org/x/sys v0.47.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -23,6 +23,6 @@ require (
 	github.com/stretchr/testify v1.12.1 // indirect
 	github.com/strongo/random v0.0.3 // indirect
 	github.com/strongo/validation v0.0.17 // indirect
-	go.starlark.net v0.0.0-20260708150628-5395d018f003 // indirect
+	go.starlark.net v0.0.0-20261021141710-4f4267fb140d // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 )
