@@ -7,7 +7,7 @@ toolchain go1.27.3
 require (
 	github.com/dal-go/dalgo v0.102.0
 	github.com/dal-go/record v0.1.5
-	github.com/gofrs/flock v0.13.1
+	github.com/gofrs/flock v0.13.2
 	github.com/ingitdb/ingitdb-go/ingitdb v0.10.6
 	github.com/ingr-io/ingr-go v0.0.2
 	golang.org/x/sys v0.49.0
