@@ -59,7 +59,9 @@ directory is the collection directory itself, so the same records are
 and files exist at that older place, every read and write of that instance fails
 with `ErrMislaidSubCollection`, naming the found path, the file count, the path the
 definition gives and the fix (move the files, or set `records_dir: .` on the parent
-and move its records), instead of reading it as empty or writing a second copy.
+and move its records), instead of reading it as empty or writing a second copy. The
+check runs at every level of the parent chain, so an instance below a mislaid
+ancestor, or mislaid below a correctly placed one, fails the same way.
 
 ## Files
 

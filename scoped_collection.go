@@ -82,7 +82,6 @@ func resolveScopedCollection(def *ingitdb.Definition, collection string, parent 
 	}
 	rootDir := cur.DirPath
 	dir := rootDir
-	legacy := rootDir // where earlier driver versions put the same instance
 	for _, a := range ancestors {
 		if err := validateRecordPathSegment(a.id); err != nil {
 			return nil, err
@@ -96,8 +95,10 @@ func resolveScopedCollection(def *ingitdb.Definition, collection string, parent 
 		if !ok {
 			return nil, fmt.Errorf("dalgo2ingitdb: %w: subcollection %q under %q", errCollectionNotInDefinition, subColID, cur.ID)
 		}
+		if err := checkNotMislaid(dir, cur, parentID, subColID); err != nil {
+			return nil, err
+		}
 		dir = filepath.Join(dir, recordsBasePath(cur), recordKeyToFileName(parentID), subColID)
-		legacy = filepath.Join(legacy, recordKeyToFileName(parentID), subColID)
 		cur = sub
 	}
 
@@ -108,19 +109,12 @@ func resolveScopedCollection(def *ingitdb.Definition, collection string, parent 
 	if !ok {
 		return nil, fmt.Errorf("dalgo2ingitdb: %w: subcollection %q under %q", errCollectionNotInDefinition, collection, cur.ID)
 	}
-	base := recordsBasePath(cur)
-	dir = filepath.Join(dir, base, recordKeyToFileName(parentID), collection)
-	legacy = filepath.Join(legacy, recordKeyToFileName(parentID), collection)
-	if err := requireContainedPath(rootDir, dir); err != nil {
+	if err := checkNotMislaid(dir, cur, parentID, collection); err != nil {
 		return nil, err
 	}
-	// legacy has the same validated segments as dir minus the records
-	// directories, so it is contained whenever dir is.
-	if legacy != dir {
-		if files := countFiles(legacy); files > 0 {
-			return nil, fmt.Errorf("dalgo2ingitdb: %w: subcollection %s/%s of parent record %q: %s holds %d file(s), but the definition puts them at %s (%s keeps its records in record_file.records_dir %q). Move them there, or set record_file.records_dir: \".\" on %s and move its own records out of its records directory",
-				ErrMislaidSubCollection, cur.ID, collection, parentID, legacy, files, dir, cur.ID, base, cur.ID)
-		}
+	dir = filepath.Join(dir, recordsBasePath(cur), recordKeyToFileName(parentID), collection)
+	if err := requireContainedPath(rootDir, dir); err != nil {
+		return nil, err
 	}
 
 	scoped := *target
@@ -131,6 +125,36 @@ func resolveScopedCollection(def *ingitdb.Definition, collection string, parent 
 // ErrMislaidSubCollection reports subcollection records found where the
 // definition does not put them (see resolveScopedCollection).
 var ErrMislaidSubCollection = errors.New("subcollection records outside the location the definition defines")
+
+// checkNotMislaid reports ErrMislaidSubCollection when the instance of
+// subcollection sub under parent record parentID of collection cur, whose
+// defined directory is parentDir (cur's resolved DirPath), has files at
+// <parentDir>/<parentID>/<sub>/ although cur keeps its records in a records
+// directory: the layout earlier driver versions wrote. It is checked at every
+// level, so a deeper instance below a mislaid ancestor is reported too (the
+// count is recursive). The path is built from validated segments below a
+// contained directory, so it is contained.
+func checkNotMislaid(parentDir string, cur *ingitdb.CollectionDef, parentID, sub string) error {
+	base := recordsBasePath(cur)
+	key := recordKeyToFileName(parentID)
+	if base == "" || key == recordsDirHead(base) {
+		return nil // no other layout, or the path is inside the records directory itself
+	}
+	found := filepath.Join(parentDir, key, sub)
+	files := countFiles(found)
+	if files == 0 {
+		return nil
+	}
+	expected := filepath.Join(parentDir, base, key, sub)
+	return fmt.Errorf("dalgo2ingitdb: %w: subcollection %s/%s of parent record %q: %s holds %d file(s), but the definition puts them at %s (%s keeps its records in record_file.records_dir %q). Move them there, or set record_file.records_dir: \".\" on %s and move its own records out of its records directory",
+		ErrMislaidSubCollection, cur.ID, sub, parentID, found, files, expected, cur.ID, base, cur.ID)
+}
+
+// recordsDirHead is the first path segment of a records directory.
+func recordsDirHead(base string) string {
+	head, _, _ := strings.Cut(filepath.ToSlash(base), "/")
+	return head
+}
 
 // recordsBasePath is the directory, below a collection's DirPath, that holds
 // its record files and its records' subcollection directories.
