@@ -1,5 +1,7 @@
 # dalgo2ingitdb — parent-chain / per-space scoping findings
 
+> **Layout update (2026-11-14).** The parent record's directory now sits in the parent's records directory (`spaces/$records/family/contacts/...` by default), the layout the inGitDB definition defines; see [FORMAT.md](FORMAT.md). The paths below show the earlier placement.
+
 **Date:** 2026-07-02 · **Status:** investigation complete, fix deferred to an owner decision on on-disk format.
 
 ## Summary

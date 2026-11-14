@@ -69,8 +69,8 @@ func TestFormatFixtures_WriterMatches(t *testing.T) {
 
 	// Compare each fixture record file against what the driver just wrote.
 	relPaths := []string{
-		filepath.Join("spaces", "family", "contacts", "$records", "c1.yaml"),
-		filepath.Join("spaces", "work", "contacts", "$records", "c1.yaml"),
+		filepath.Join("spaces", "$records", "family", "contacts", "$records", "c1.yaml"),
+		filepath.Join("spaces", "$records", "work", "contacts", "$records", "c1.yaml"),
 	}
 	for _, rel := range relPaths {
 		want, err := os.ReadFile(filepath.Join(fixturesDir, rel))

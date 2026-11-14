@@ -101,7 +101,7 @@ func TestDB_ParentIDsCannotEscapeCollection(t *testing.T) {
 	if err := setNamedRecord(ctx, db, key); err != nil {
 		t.Fatalf("Set under parent with separators: %v", err)
 	}
-	want := filepath.Join(root, "spaces", "..%2F..%2Foutside", "contacts", "$records", "c1.yaml")
+	want := filepath.Join(root, "spaces", "$records", "..%2F..%2Foutside", "contacts", "$records", "c1.yaml")
 	if _, err := os.Stat(want); err != nil {
 		t.Errorf("want nested record at %s: %v", want, err)
 	}
