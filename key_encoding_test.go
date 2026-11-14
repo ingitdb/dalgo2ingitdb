@@ -159,3 +159,52 @@ func TestKeyEncoding_TildeV1Refusals(t *testing.T) {
 		t.Errorf("query of a name the encoding never writes: %v", err)
 	}
 }
+
+const plainDefinition = `record_file:
+    name: '{key}.yaml'
+    format: yaml
+    type: map[string]any
+columns:
+    name:
+        type: string
+columns_order:
+    - name
+`
+
+// Every one-record-per-file collection fails an over-long key with
+// ErrKeyNotStorable and the remedy, measured on the name actually written
+// (path separators escaped), for the record file and a parent directory.
+func TestLengthRule_NoKeyEncoding(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	root := t.TempDir()
+	for name, content := range map[string]string{
+		".ingitdb/root-collections.yaml":                          "spaces: spaces\n",
+		"spaces/.collection/definition.yaml":                      plainDefinition,
+		"spaces/.collection/subcollections/notes/definition.yaml": plainDefinition,
+	} {
+		p := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db, err := dalgo2ingitdb.NewDatabase(root, validator.NewCollectionsReader())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := set(ctx, db, record.NewKeyWithID("spaces", strings.Repeat("k", 250)), "fits"); err != nil {
+		t.Errorf("a 255-byte name: %v", err)
+	}
+	if err := set(ctx, db, record.NewKeyWithID("spaces", strings.Repeat("k", 251)), "x"); !errors.Is(err, ingitdb.ErrKeyNotStorable) || !strings.Contains(err.Error(), "record_file.type") {
+		t.Errorf("a 256-byte name: %v", err)
+	}
+	if err := set(ctx, db, record.NewKeyWithID("spaces", strings.Repeat("a/", 70)+"a"), "x"); !errors.Is(err, ingitdb.ErrKeyNotStorable) {
+		t.Errorf("a key that escapes to an over-long name: %v", err)
+	}
+	if err := set(ctx, db, record.NewKeyWithParentAndID(record.NewKeyWithID("spaces", strings.Repeat("p", 256)), "notes", "n"), "x"); !errors.Is(err, ingitdb.ErrKeyNotStorable) {
+		t.Errorf("an over-long parent directory: %v", err)
+	}
+}

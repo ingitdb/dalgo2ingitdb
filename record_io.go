@@ -52,7 +52,15 @@ func parentKeyName(cur *ingitdb.CollectionDef, id string) (string, error) {
 	if err := validateRecordPathSegment(id); err != nil {
 		return "", err
 	}
-	return recordKeyToFileName(id), nil
+	name := recordKeyToFileName(id)
+	if cur.RecordFile != nil {
+		// The length rule holds for every collection, measured on the name
+		// actually written (record-key-encoding#req:over-long-key-fails).
+		if _, err := cur.RecordFile.KeyDirName(name); err != nil {
+			return "", fmt.Errorf("dalgo2ingitdb: %w", err)
+		}
+	}
+	return name, nil
 }
 
 // ErrNameDiffersInCase reports a record file whose name differs from an
@@ -152,6 +160,9 @@ func validateRecordFileKey(colDef *ingitdb.CollectionDef, recordKey string) erro
 		}
 	} else if err := validateRecordPathSegment(recordKey); err != nil {
 		return err
+	} else if err := colDef.RecordFile.CheckKeyFits(recordKeyToFileName(recordKey)); err != nil {
+		// The same length rule, measured on the escaped name actually written.
+		return fmt.Errorf("dalgo2ingitdb: %w", err)
 	}
 	return requireContainedPath(colDef.DirPath, resolveRecordPath(colDef, recordKey))
 }
