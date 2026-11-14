@@ -16,7 +16,8 @@ import (
 //
 // The mapping is many-to-one for time types (date, time, datetime all map
 // to dbschema.Time) and for non-scalar types (any, map[...]string all map
-// to dbschema.String). Round-tripping through dbschemaTypeToIngitdb is
+// to dbschema.String; so do list types such as []string and []any, which hold
+// JSON arrays as map types hold JSON objects). Round-tripping through dbschemaTypeToIngitdb is
 // therefore lossy: a date column read back as dbschema.Time then written
 // back to ingitdb becomes datetime.
 func ingitdbTypeToDBSchema(t ingitdb.ColumnType) (dbschema.Type, error) {
@@ -36,7 +37,7 @@ func ingitdbTypeToDBSchema(t ingitdb.ColumnType) (dbschema.Type, error) {
 	case "":
 		return dbschema.Null, fmt.Errorf("empty ingitdb column type")
 	}
-	if strings.HasPrefix(string(t), "map[") {
+	if strings.HasPrefix(string(t), "map[") || (strings.HasPrefix(string(t), "[]") && len(t) > len("[]")) {
 		return dbschema.String, nil
 	}
 	return dbschema.Null, fmt.Errorf("unsupported ingitdb column type: %q", t)
