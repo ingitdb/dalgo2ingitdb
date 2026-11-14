@@ -47,6 +47,14 @@ type readwriteTx struct {
 	snapshots map[string]fileSnapshot
 }
 
+// rootPath is the database directory, or "" for a transaction without one.
+func (r readwriteTx) rootPath() string {
+	if r.db == nil {
+		return ""
+	}
+	return r.db.projectPath
+}
+
 type fileSnapshot struct {
 	exists bool
 	mode   fs.FileMode
@@ -116,6 +124,9 @@ func (r readwriteTx) Set(_ context.Context, record dalrecord2.Record) error {
 		return err
 	}
 	path := resolveRecordPath(colDef, recordKey)
+	if err := checkNoCaseCollision(r.rootPath(), colDef, recordKey, path); err != nil {
+		return err
+	}
 	if err := r.snapshot(path); err != nil {
 		return err
 	}
@@ -178,6 +189,9 @@ func (r readwriteTx) Insert(_ context.Context, record dalrecord2.Record, _ ...da
 		return err
 	}
 	path := resolveRecordPath(colDef, recordKey)
+	if err := checkNoCaseCollision(r.rootPath(), colDef, recordKey, path); err != nil {
+		return err
+	}
 	if err := r.snapshot(path); err != nil {
 		return err
 	}

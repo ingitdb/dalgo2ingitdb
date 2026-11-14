@@ -27,6 +27,66 @@ func recordKeyToFileName(recordKey string) string {
 	return recordKeyFileNameEscaper.Replace(recordKey)
 }
 
+// keyName is the name of a record key in a record file name: under the
+// collection's record_file.key_encoding when it declares one (the key was
+// checked by validateRecordFileKey), otherwise with path separators escaped.
+func keyName(rf *ingitdb.RecordFileDef, recordKey string) string {
+	if rf.EncodesKeys() {
+		name, _ := rf.EncodeKey(recordKey)
+		return name
+	}
+	return recordKeyToFileName(recordKey)
+}
+
+// parentKeyName is the directory name of parent record id of collection cur:
+// under cur's key_encoding when it declares one (refused when too long),
+// otherwise the validated id with path separators escaped.
+func parentKeyName(cur *ingitdb.CollectionDef, id string) (string, error) {
+	if cur.RecordFile != nil && cur.RecordFile.EncodesKeys() {
+		name, err := cur.RecordFile.KeyDirName(id)
+		if err != nil {
+			return "", fmt.Errorf("dalgo2ingitdb: %w", err)
+		}
+		return name, nil
+	}
+	if err := validateRecordPathSegment(id); err != nil {
+		return "", err
+	}
+	name := recordKeyToFileName(id)
+	if cur.RecordFile != nil {
+		// The length rule holds for every collection, measured on the name
+		// actually written (record-key-encoding#req:over-long-key-fails).
+		if _, err := cur.RecordFile.KeyDirName(name); err != nil {
+			return "", fmt.Errorf("dalgo2ingitdb: %w", err)
+		}
+	}
+	return name, nil
+}
+
+// ErrNameDiffersInCase reports a record file whose name differs from an
+// existing one only in letter case: on a case-insensitive file system both
+// would be one file.
+var ErrNameDiffersInCase = errors.New("record file name differs from an existing one only in letter case")
+
+// checkNoCaseCollision refuses to create the record file at path when the
+// collection declares a key encoding and path, or a directory on it below
+// root (a parent record's directory included), names an existing entry that
+// differs only in letter case. With an empty root only the record file's own
+// directory is checked.
+func checkNoCaseCollision(root string, colDef *ingitdb.CollectionDef, recordKey, path string) error {
+	if !colDef.RecordFile.EncodesKeys() || colDef.RecordFile.RecordType != ingitdb.SingleRecord {
+		return nil
+	}
+	if root == "" {
+		root = filepath.Dir(path)
+	}
+	if existing, found := ingitdb.PathDifferingInCase(root, path); found {
+		return fmt.Errorf("dalgo2ingitdb: %w: record %q would be written to %s, but %s exists; on a case-insensitive file system (Windows, macOS by default) they are one entry: use a key that differs in more than letter case",
+			ErrNameDiffersInCase, recordKey, path, existing)
+	}
+	return nil
+}
+
 // recordKeyFromFileName reverses recordKeyToFileName.
 func recordKeyFromFileName(name string) string {
 	return recordKeyFileNameUnescaper.Replace(name)
@@ -92,8 +152,17 @@ func validateRecordFileKey(colDef *ingitdb.CollectionDef, recordKey string) erro
 	if !strings.Contains(colDef.RecordFile.Name, "{key}") {
 		return nil
 	}
-	if err := validateRecordPathSegment(recordKey); err != nil {
+	if colDef.RecordFile.EncodesKeys() {
+		// The declared encoding makes any non-empty key a safe name; only
+		// its length can stop it (record-key-encoding#req:over-long-key-fails).
+		if err := colDef.RecordFile.CheckKeyFits(recordKey); err != nil {
+			return fmt.Errorf("dalgo2ingitdb: %w", err)
+		}
+	} else if err := validateRecordPathSegment(recordKey); err != nil {
 		return err
+	} else if err := colDef.RecordFile.CheckKeyFits(recordKeyToFileName(recordKey)); err != nil {
+		// The same length rule, measured on the escaped name actually written.
+		return fmt.Errorf("dalgo2ingitdb: %w", err)
 	}
 	return requireContainedPath(colDef.DirPath, resolveRecordPath(colDef, recordKey))
 }
@@ -113,7 +182,7 @@ func requireContainedPath(dir, path string) error {
 // `{key}`). Path separators in the key are escaped so the record is always one
 // file (see recordKeyToFileName).
 func resolveRecordPath(colDef *ingitdb.CollectionDef, recordKey string) string {
-	name := strings.ReplaceAll(colDef.RecordFile.Name, "{key}", recordKeyToFileName(recordKey))
+	name := strings.ReplaceAll(colDef.RecordFile.Name, "{key}", keyName(colDef.RecordFile, recordKey))
 	base := colDef.RecordFile.RecordsBasePath()
 	return filepath.Join(colDef.DirPath, base, name)
 }

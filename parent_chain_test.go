@@ -61,7 +61,7 @@ func setupSpacesWithContactsSubcollection(t *testing.T) (dal.DB, string) {
 // ("contacts") and record id ("c1") but live under different parent spaces
 // ("family" vs "work"). Before the fix both mapped to the same flat contacts
 // dir + file and clobbered each other; after it, each is physically scoped under
-// its parent (spaces/<spaceID>/contacts/c1.yaml) and round-trips independently.
+// its parent (spaces/$records/<spaceID>/contacts/, below the records directory) and round-trips independently.
 func TestNestedKeys_ScopedByParentRecord(t *testing.T) {
 	db, root := setupSpacesWithContactsSubcollection(t)
 	ctx := context.Background()
@@ -79,8 +79,8 @@ func TestNestedKeys_ScopedByParentRecord(t *testing.T) {
 	}
 
 	// Physical layout: nested under the parent space, no collision.
-	familyPath := filepath.Join(root, "spaces", "family", "contacts", "$records", "c1.yaml")
-	workPath := filepath.Join(root, "spaces", "work", "contacts", "$records", "c1.yaml")
+	familyPath := filepath.Join(root, "spaces", "$records", "family", "contacts", "$records", "c1.yaml")
+	workPath := filepath.Join(root, "spaces", "$records", "work", "contacts", "$records", "c1.yaml")
 	if _, err := os.Stat(familyPath); err != nil {
 		t.Errorf("expected family contact file at %s: %v", familyPath, err)
 	}

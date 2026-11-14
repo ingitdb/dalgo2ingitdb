@@ -617,6 +617,15 @@ func readAllSingleStored(colDef *ingitdb.CollectionDef) ([]KeyedStored, error) {
 		if recordKey == "" {
 			continue
 		}
+		if colDef.RecordFile.EncodesKeys() {
+			if strings.HasPrefix(recordKey, ".") {
+				continue // a hidden file (editor lock, macOS "._"): the encoding never writes one
+			}
+			// A tilde-v1 name holds no "%", so the extractor left it as it is.
+			if recordKey, err = colDef.RecordFile.DecodeKey(recordKey); err != nil {
+				return nil, fmt.Errorf("dalgo2ingitdb: record file %s: %w", match, err)
+			}
+		}
 		data, found, readErr := readSingleRecord(match, colDef)
 		if readErr != nil {
 			return nil, readErr
