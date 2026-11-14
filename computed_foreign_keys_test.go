@@ -503,3 +503,17 @@ func TestReadwriteTx_UpdateRecordComputedForeignKeyInputToExistingParentSucceeds
 		t.Fatalf("things owner_input = %v, want 2", data["owner_input"])
 	}
 }
+
+// A computed foreign_key that names a subcollection by path is checked by
+// `ingitdb validate`, not at write time: the write succeeds instead of failing
+// as a configuration error.
+func TestReadwriteTx_InsertComputedSubcollectionPathForeignKeyNotCheckedOnWrite(t *testing.T) {
+	t.Parallel()
+	db, root := setupComputedForeignKeyDBWith(t, "users/u1/devices", `"d-" + owner_input`, dbschema.String)
+	if err := insertRecord(t, db, "things", "thing-1", map[string]any{"owner_input": "absent"}); err != nil {
+		t.Fatalf("insert thing: %v", err)
+	}
+	if _, err := os.Stat(thingRecordPath(root, "thing-1")); err != nil {
+		t.Fatalf("thing record file: stat: %v", err)
+	}
+}

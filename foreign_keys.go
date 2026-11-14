@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/ingitdb/ingitdb-go/ingitdb"
 )
@@ -62,7 +63,7 @@ func (r readwriteTx) validateComputedWriteForeignKeys(operation, childCollection
 	for _, field := range orderedComputedColumns(childDef) {
 		column := childDef.Columns[field]
 		parentCollection := column.ForeignKey
-		if parentCollection == "" {
+		if parentCollection == "" || isForeignKeyPath(parentCollection) {
 			continue
 		}
 		result, err := ingitdb.EvaluateFormula(column.Formula, data)
@@ -201,11 +202,21 @@ func (r readwriteTx) validateDeleteComputedForeignKeys(parentCollection, parentK
 // orderedForeignKeyFields returns the names of stored foreign-key columns
 // (ForeignKey set, Formula empty) in deterministic order. Computed foreign keys
 // are never stored and are handled separately by the computed-FK validators, so
-// they are excluded here.
+// they are excluded here, as are foreign keys that name a subcollection.
 func orderedForeignKeyFields(colDef *ingitdb.CollectionDef) []string {
 	return orderedColumns(colDef, func(c *ingitdb.ColumnDef) bool {
-		return c.ForeignKey != "" && c.Formula == ""
+		return c.ForeignKey != "" && c.Formula == "" && !isForeignKeyPath(c.ForeignKey)
 	})
+}
+
+// isForeignKeyPath reports whether a foreign_key names a subcollection by path
+// (ext/commitius/cmSessions) instead of a root collection. Such a reference
+// is checked by `ingitdb validate` (ingitdb-go), not at write time: a write
+// would need the target's parent keys, and refusing the write as a
+// configuration error would make the collection unwritable. Root collection
+// ids never contain "/", so root foreign keys are checked as before.
+func isForeignKeyPath(foreignKey string) bool {
+	return strings.Contains(foreignKey, "/")
 }
 
 func orderedCollectionIDs(collections map[string]*ingitdb.CollectionDef) []string {
