@@ -469,3 +469,19 @@ func TestReadwriteTx_DeleteParentReferencedFromListFails(t *testing.T) {
 	}
 	requireNoRecordFile(t, collectionRecordPath(root, "parents", "parent-3"))
 }
+
+// A foreign_key that names a subcollection by path (parents/p1/pets) is
+// checked by `ingitdb validate`, not at write time: the write succeeds instead
+// of failing as a configuration error. Root foreign keys are unaffected (the
+// tests above).
+func TestReadwriteTx_InsertSubcollectionPathForeignKeyNotCheckedOnWrite(t *testing.T) {
+	t.Parallel()
+	db, root := setupForeignKeyDB(t, "parents/p1/pets")
+	childData := map[string]any{"name": "Child", "parent_id": "absent"}
+	if err := insertForeignKeyRecord(t, db, "children", "child-1", childData); err != nil {
+		t.Fatalf("insert child: %v", err)
+	}
+	if _, err := os.Stat(childRecordPath(root, "child-1")); err != nil {
+		t.Fatalf("child record file: stat: %v", err)
+	}
+}
