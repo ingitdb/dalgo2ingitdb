@@ -16,7 +16,8 @@ import (
 //
 // The mapping is many-to-one for time types (date, time, datetime all map
 // to dbschema.Time) and for non-scalar types (any, map[...]string all map
-// to dbschema.String). Round-tripping through dbschemaTypeToIngitdb is
+// to dbschema.String; so do list types such as []string and []any, which hold
+// JSON arrays as map types hold JSON objects). Round-tripping through dbschemaTypeToIngitdb is
 // therefore lossy: a date column read back as dbschema.Time then written
 // back to ingitdb becomes datetime.
 func ingitdbTypeToDBSchema(t ingitdb.ColumnType) (dbschema.Type, error) {
@@ -37,6 +38,9 @@ func ingitdbTypeToDBSchema(t ingitdb.ColumnType) (dbschema.Type, error) {
 		return dbschema.Null, fmt.Errorf("empty ingitdb column type")
 	}
 	if strings.HasPrefix(string(t), "map[") {
+		return dbschema.String, nil
+	}
+	if elem, isList := strings.CutPrefix(string(t), "[]"); isList && validListElement(elem) {
 		return dbschema.String, nil
 	}
 	return dbschema.Null, fmt.Errorf("unsupported ingitdb column type: %q", t)
@@ -78,4 +82,16 @@ func dbschemaTypeToIngitdb(t dbschema.Type) (ingitdb.ColumnType, error) {
 		return "", fmt.Errorf("dbschema.Null cannot be mapped to an ingitdb column type")
 	}
 	return "", fmt.Errorf("unsupported dbschema.Type: %s", t)
+}
+
+// validListElement reports whether elem, the element type of a list column
+// type []elem, is itself a column type: a scalar or list type that
+// ingitdbTypeToDBSchema accepts, or a map type written map[K]V.
+func validListElement(elem string) bool {
+	if rest, isMap := strings.CutPrefix(elem, "map["); isMap {
+		key, value, found := strings.Cut(rest, "]")
+		return found && key != "" && value != ""
+	}
+	_, err := ingitdbTypeToDBSchema(ingitdb.ColumnType(elem))
+	return err == nil
 }
