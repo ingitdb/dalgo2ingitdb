@@ -124,7 +124,7 @@ func TestKeyEncoding_TildeV1Refusals(t *testing.T) {
 	if err := set(ctx, db, record.NewKeyWithID("spaces", "ab"), "ab"); err != nil {
 		t.Fatal(err)
 	}
-	if err := set(ctx, db, record.NewKeyWithID("spaces", "AB"), "x"); !errors.Is(err, dalgo2ingitdb.ErrNameDiffersInCase) || !strings.Contains(err.Error(), "ab.yaml exists there") {
+	if err := set(ctx, db, record.NewKeyWithID("spaces", "AB"), "x"); !errors.Is(err, dalgo2ingitdb.ErrNameDiffersInCase) || !strings.Contains(err.Error(), "ab.yaml exists;") {
 		t.Errorf("Set case-only difference: %v", err)
 	}
 	if err := db.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
@@ -138,6 +138,19 @@ func TestKeyEncoding_TildeV1Refusals(t *testing.T) {
 	}
 	if err := set(ctx, db, record.NewKeyWithParentAndID(record.NewKeyWithID("spaces", strings.Repeat("/", 90)), "notes", "n"), "x"); !errors.Is(err, ingitdb.ErrKeyNotStorable) {
 		t.Errorf("over-long parent: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "spaces", "$records", ".#ab.yaml"), []byte("name: x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if ids, err := names(t, db, dal.NewRootCollectionRef("spaces", "")); err != nil || strings.Join(ids, " ") != "ab" {
+		t.Errorf("a hidden file is skipped: %q, %v", ids, err)
+	}
+	// A parent directory that differs only in case is refused too.
+	if err := set(ctx, db, record.NewKeyWithParentAndID(record.NewKeyWithID("spaces", "Pq"), "notes", "n"), "x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := set(ctx, db, record.NewKeyWithParentAndID(record.NewKeyWithID("spaces", "pq"), "notes", "m"), "x"); !errors.Is(err, dalgo2ingitdb.ErrNameDiffersInCase) || !strings.Contains(err.Error(), filepath.Join("$records", "Pq")+" exists") {
+		t.Errorf("Set under a parent directory differing in case: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "spaces", "$records", "a b.yaml"), []byte("name: x\n"), 0o644); err != nil {
 		t.Fatal(err)

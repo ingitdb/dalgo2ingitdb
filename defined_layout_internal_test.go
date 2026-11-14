@@ -106,3 +106,16 @@ func TestDefinedLayout_InvalidAncestorID(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+// Without a database root only the record file's own directory is checked.
+func TestCheckNoCaseCollision_NoRoot(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Ab.yaml"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	col := &ingitdb.CollectionDef{RecordFile: &ingitdb.RecordFileDef{Name: "{key}.yaml", RecordType: ingitdb.SingleRecord, KeyEncoding: ingitdb.KeyEncodingTildeV1}}
+	if err := checkNoCaseCollision("", col, "ab", filepath.Join(dir, "ab.yaml")); !errors.Is(err, ErrNameDiffersInCase) {
+		t.Errorf("got %v", err)
+	}
+}

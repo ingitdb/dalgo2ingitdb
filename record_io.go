@@ -61,15 +61,20 @@ func parentKeyName(cur *ingitdb.CollectionDef, id string) (string, error) {
 var ErrNameDiffersInCase = errors.New("record file name differs from an existing one only in letter case")
 
 // checkNoCaseCollision refuses to create the record file at path when the
-// collection declares a key encoding and its directory holds a name equal to
-// path's when letter case is ignored.
-func checkNoCaseCollision(colDef *ingitdb.CollectionDef, recordKey, path string) error {
+// collection declares a key encoding and path, or a directory on it below
+// root (a parent record's directory included), names an existing entry that
+// differs only in letter case. With an empty root only the record file's own
+// directory is checked.
+func checkNoCaseCollision(root string, colDef *ingitdb.CollectionDef, recordKey, path string) error {
 	if !colDef.RecordFile.EncodesKeys() || colDef.RecordFile.RecordType != ingitdb.SingleRecord {
 		return nil
 	}
-	if existing, found := ingitdb.NameDifferingInCase(filepath.Dir(path), filepath.Base(path)); found {
-		return fmt.Errorf("dalgo2ingitdb: %w: record %q would be written to %s, but %s exists there; on a case-insensitive file system (Windows, macOS by default) they are one file: use a key that differs in more than letter case",
-			ErrNameDiffersInCase, recordKey, filepath.Base(path), existing)
+	if root == "" {
+		root = filepath.Dir(path)
+	}
+	if existing, found := ingitdb.PathDifferingInCase(root, path); found {
+		return fmt.Errorf("dalgo2ingitdb: %w: record %q would be written to %s, but %s exists; on a case-insensitive file system (Windows, macOS by default) they are one entry: use a key that differs in more than letter case",
+			ErrNameDiffersInCase, recordKey, path, existing)
 	}
 	return nil
 }
