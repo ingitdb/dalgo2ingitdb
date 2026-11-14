@@ -97,3 +97,12 @@ func TestDefinedLayout_NestedRecordsDirNotMislaid(t *testing.T) {
 		t.Errorf("DirPath = %s, want %s", col.DirPath, want)
 	}
 }
+
+// An invalid ancestor ID is refused at its own level.
+func TestDefinedLayout_InvalidAncestorID(t *testing.T) {
+	t.Parallel()
+	key := record.NewKeyWithParentAndID(record.NewKeyWithID("spaces", ".."), "contacts", "c1")
+	if _, err := resolveScopedCollection(spacesContactsNotes(t.TempDir(), nil), "notes", key); err == nil || !strings.Contains(err.Error(), `".." cannot be used as a file name`) {
+		t.Fatalf("got %v", err)
+	}
+}

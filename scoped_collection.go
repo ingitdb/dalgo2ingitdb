@@ -82,37 +82,40 @@ func resolveScopedCollection(def *ingitdb.Definition, collection string, parent 
 	}
 	rootDir := cur.DirPath
 	dir := rootDir
-	for _, a := range ancestors {
-		if err := validateRecordPathSegment(a.id); err != nil {
-			return nil, err
-		}
-	}
 	// Walk the intermediate ancestors (root's children, grandchildren, ...).
 	for i := 1; i < len(ancestors); i++ {
 		parentID := ancestors[i-1].id
+		name, err := parentKeyName(cur, parentID)
+		if err != nil {
+			return nil, err
+		}
 		subColID := ancestors[i].col
 		sub, ok := cur.SubCollections[subColID]
 		if !ok {
 			return nil, fmt.Errorf("dalgo2ingitdb: %w: subcollection %q under %q", errCollectionNotInDefinition, subColID, cur.ID)
 		}
-		if err := checkNotMislaid(dir, cur, parentID, subColID); err != nil {
+		if err := checkNotMislaid(dir, cur, parentID, name, subColID); err != nil {
 			return nil, err
 		}
-		dir = filepath.Join(dir, recordsBasePath(cur), recordKeyToFileName(parentID), subColID)
+		dir = filepath.Join(dir, recordsBasePath(cur), name, subColID)
 		cur = sub
 	}
 
 	// Finally descend into the target collection as a subcollection of the
 	// deepest ancestor record.
 	parentID := ancestors[len(ancestors)-1].id
+	name, err := parentKeyName(cur, parentID)
+	if err != nil {
+		return nil, err
+	}
 	target, ok := cur.SubCollections[collection]
 	if !ok {
 		return nil, fmt.Errorf("dalgo2ingitdb: %w: subcollection %q under %q", errCollectionNotInDefinition, collection, cur.ID)
 	}
-	if err := checkNotMislaid(dir, cur, parentID, collection); err != nil {
+	if err := checkNotMislaid(dir, cur, parentID, name, collection); err != nil {
 		return nil, err
 	}
-	dir = filepath.Join(dir, recordsBasePath(cur), recordKeyToFileName(parentID), collection)
+	dir = filepath.Join(dir, recordsBasePath(cur), name, collection)
 	if err := requireContainedPath(rootDir, dir); err != nil {
 		return nil, err
 	}
@@ -134,9 +137,8 @@ var ErrMislaidSubCollection = errors.New("subcollection records outside the loca
 // level, so a deeper instance below a mislaid ancestor is reported too (the
 // count is recursive). The path is built from validated segments below a
 // contained directory, so it is contained.
-func checkNotMislaid(parentDir string, cur *ingitdb.CollectionDef, parentID, sub string) error {
+func checkNotMislaid(parentDir string, cur *ingitdb.CollectionDef, parentID, key, sub string) error {
 	base := recordsBasePath(cur)
-	key := recordKeyToFileName(parentID)
 	if base == "" || key == recordsDirHead(base) {
 		return nil // no other layout, or the path is inside the records directory itself
 	}

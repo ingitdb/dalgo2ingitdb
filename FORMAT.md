@@ -63,6 +63,16 @@ and move its records), instead of reading it as empty or writing a second copy. 
 check runs at every level of the parent chain, so an instance below a mislaid
 ancestor, or mislaid below a correctly placed one, fails the same way.
 
+**Record key names.** A collection that declares `record_file.key_encoding: tilde-v1`
+stores every key, and every parent record ID on a subcollection path, under the name
+`ingitdb.EncodeRecordKey` gives it (`a/b` is `a~2Fb`, `..` is `~2E~2E`, `CON` is `~43ON`),
+and reads names back as the real ids. It refuses a key whose file name would exceed 255
+bytes (`ingitdb.ErrKeyNotStorable`; use a collection that keeps its records in one file),
+a record file that differs from an existing one only in letter case
+(`ErrNameDiffersInCase`), and fails a query on a name the encoding never writes. Without
+the setting a key is its file name with `/` and `\` written as `%2F` and `%5C`, as before.
+See the ingitdb-go spec `record-key-encoding`.
+
 ## Files
 
 - **`.ingitdb/root-collections.yaml`** — `id: path` lines registering top-level

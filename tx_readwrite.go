@@ -116,6 +116,9 @@ func (r readwriteTx) Set(_ context.Context, record dalrecord2.Record) error {
 		return err
 	}
 	path := resolveRecordPath(colDef, recordKey)
+	if err := checkNoCaseCollision(colDef, recordKey, path); err != nil {
+		return err
+	}
 	if err := r.snapshot(path); err != nil {
 		return err
 	}
@@ -178,6 +181,9 @@ func (r readwriteTx) Insert(_ context.Context, record dalrecord2.Record, _ ...da
 		return err
 	}
 	path := resolveRecordPath(colDef, recordKey)
+	if err := checkNoCaseCollision(colDef, recordKey, path); err != nil {
+		return err
+	}
 	if err := r.snapshot(path); err != nil {
 		return err
 	}
