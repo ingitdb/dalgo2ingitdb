@@ -29,6 +29,12 @@ func TestIngitdbTypeToDBSchema(t *testing.T) {
 		{ingitdb.ColumnType("[]any"), dbschema.String, false},
 		{ingitdb.ColumnType("[]map[string]any"), dbschema.String, false},
 		{ingitdb.ColumnType("[]"), dbschema.Null, true},
+		{ingitdb.ColumnType("[]bogus"), dbschema.Null, true},
+		{ingitdb.ColumnType("[]]"), dbschema.Null, true},
+		{ingitdb.ColumnType("[] "), dbschema.Null, true},
+		{ingitdb.ColumnType("[][]int"), dbschema.String, false},
+		{ingitdb.ColumnType("[]map["), dbschema.Null, true},
+		{ingitdb.ColumnType("[]map[string]"), dbschema.Null, true},
 		{"", dbschema.Null, true},
 		{ingitdb.ColumnType("unknown"), dbschema.Null, true},
 	}
