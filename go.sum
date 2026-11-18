@@ -19,6 +19,8 @@ github.com/ingitdb/ingitdb-go/ingitdb v0.11.0 h1:kDHiOABHo1R2MosM851fvwHPBkvSqLg
 github.com/ingitdb/ingitdb-go/ingitdb v0.11.0/go.mod h1:0Jm9fWk+6g/g1Xf8C9TbFs7X9z6Pal9rfgaSMFP16e4=
 github.com/ingitdb/ingitdb-go/ingitdb v0.11.1 h1:+GPNblwRv3ngW/VDVFEkqvmZUKjhGmd135TeSub7QEs=
 github.com/ingitdb/ingitdb-go/ingitdb v0.11.1/go.mod h1:oMOOM5ndfS+VLgDbA+oRCUMMzbvi/+tZ20PYSZPp2rY=
+github.com/ingitdb/ingitdb-go/ingitdb v0.11.3 h1:nR41h2HODF/tiNSRD+3nb4HIyrvs651qDQ2Dbb3ehVA=
+github.com/ingitdb/ingitdb-go/ingitdb v0.11.3/go.mod h1:DmkkXvzUlQs5sS5S2MLltE37CzcZ4vnN7NslApVEyWs=
 github.com/ingr-io/ingr-go v0.0.2 h1:2AfFllqzCe2dCNtxIUo306oYzaZr//YzrVOHd0C73nI=
 github.com/ingr-io/ingr-go v0.0.2/go.mod h1:gb/dGW0qXziCq9iAIgk0yITyWY013w2bhdYiXO0RLuY=
 github.com/kr/pretty v0.3.1 h1:flRD4NNwYAUpkphVc1HcthR4KEIFJ65n8Mw5qdRn3LE=
@@ -49,6 +51,8 @@ golang.org/x/sys v0.50.0 h1:dkKZEFTEKaLr1sjhs0WiKqoi8Jj5nHbS3Njmx1UoMJs=
 golang.org/x/sys v0.50.0/go.mod h1:hNLxWAXmnKAxqDtdwIYC4bM9oQPEecfsnNMuSxOs3og=
 golang.org/x/text v0.43.0 h1:1QivrlhwAsnMOcqgOdl9my7s9OyZl8O5/UGUTJVXoWc=
 golang.org/x/text v0.43.0/go.mod h1:hbSIYA/amXcRXTFSZqh8tWHEoqRvvbKPJ2uz/KU+a+s=
+golang.org/x/text v0.44.0 h1:YItdp/mQNGnsmrgpcdA5yQ3bnRxCfo/Tj/iByGW9GGo=
+golang.org/x/text v0.44.0/go.mod h1:S4FR1waQ9LbjQTls97SyRjDaUUVkaM+cXwwuG/G+MwY=
 google.golang.org/protobuf v1.36.11 h1:fV6ZwhNocDyBLK0dj+fg8ektcVegBBuEolpbTQyBNVE=
 google.golang.org/protobuf v1.36.11/go.mod h1:HTf+CrKn2C3g5S8VImy6tdcUvCska2kB7j23XfzDpco=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
